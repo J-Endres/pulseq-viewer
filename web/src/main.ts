@@ -3,6 +3,7 @@ import init, { Viewer } from "./wasm/seq_core.js";
 import { State } from "./state.ts";
 import { Plot } from "./render.ts";
 import { buildLoopPanel, formatDuration } from "./controls.ts";
+import { EXAMPLES, fetchExample } from "./examples.ts";
 
 const $ = <T extends HTMLElement>(sel: string) => {
   const el = document.querySelector<T>(sel);
@@ -12,6 +13,7 @@ const $ = <T extends HTMLElement>(sel: string) => {
 
 const fileInput = $<HTMLInputElement>("#file");
 const fileName = $("#file-name");
+const exampleSelect = $<HTMLSelectElement>("#example");
 const plotHost = $("#plot");
 const canvas = $<HTMLCanvasElement>("#canvas");
 const message = $("#message");
@@ -29,23 +31,34 @@ function showMessage(text: string, kind: "hint" | "error" | "busy"): void {
   message.hidden = false;
 }
 
-async function open(file: File): Promise<void> {
-  fileName.textContent = file.name;
-  showMessage(`Reading ${file.name}…`, "busy");
+/** Increments on every load so a slower earlier load cannot replace a newer one. */
+let loadId = 0;
+
+async function open(name: string, readText: () => Promise<string>): Promise<void> {
+  const id = ++loadId;
+  fileName.textContent = name;
+  showMessage(`Reading ${name}…`, "busy");
   // Let the message paint before the synchronous analysis.
   await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
   try {
-    const [text] = await Promise.all([file.text(), wasmReady]);
+    const [text] = await Promise.all([readText(), wasmReady]);
+    if (id !== loadId) return;
     const viewer = Viewer.load(text);
     current?.dispose();
     current = show(viewer);
     if (import.meta.env.DEV) Object.assign(window, { pulseq: current });
     message.hidden = true;
   } catch (e) {
+    if (id !== loadId) return;
     const msg = e instanceof Error ? e.message : String(e);
-    showMessage(`Could not load ${file.name}: ${msg}`, "error");
+    showMessage(`Could not load ${name}: ${msg}`, "error");
     console.error(e);
   }
+}
+
+function openFile(file: File): void {
+  exampleSelect.value = "";
+  void open(file.name, () => file.text());
 }
 
 function show(viewer: Viewer): { state: State; plot: Plot; dispose: () => void } {
@@ -212,7 +225,7 @@ function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void 
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
-  if (file) void open(file);
+  if (file) openFile(file);
   fileInput.value = "";
 });
 
@@ -235,7 +248,15 @@ window.addEventListener("drop", (e) => {
   dragDepth = 0;
   document.body.classList.remove("dropping");
   const file = e.dataTransfer?.files[0];
-  if (file) void open(file);
+  if (file) openFile(file);
 });
 
-showMessage("Open a .seq file or drop it here. Files are read locally and never uploaded.", "hint");
+for (const [i, example] of EXAMPLES.entries()) {
+  exampleSelect.add(new Option(example.label, String(i)));
+}
+exampleSelect.addEventListener("change", () => {
+  const example = EXAMPLES[Number(exampleSelect.value)];
+  if (example) void open(example.file, () => fetchExample(example));
+});
+
+showMessage("Open a .seq file, drop it here, or pick an example. Files are read locally and never uploaded.", "hint");

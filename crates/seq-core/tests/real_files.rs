@@ -1,7 +1,7 @@
 use seq_core::model::{Analysis, NONE};
 
 fn load(name: &str) -> Analysis {
-    let path = format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../web/public/examples/{name}", env!("CARGO_MANIFEST_DIR"));
     let source = std::fs::read_to_string(path).unwrap();
     Analysis::load(&source).unwrap()
 }
@@ -62,4 +62,12 @@ fn radial() {
     let a = load("seq_make_radial.seq");
     println!("{}", describe(&a));
     check_cover(&a);
+}
+
+#[test]
+fn flash_repeated_nests() {
+    let a = load("flash_repeated.seq");
+    check_cover(&a);
+    let loops: Vec<_> = a.loops.iter().map(|l| (l.depth, l.count, l.blocks_per_iter)).collect();
+    assert_eq!(loops, [(0, 200, 481), (1, 96, 5)]);
 }
