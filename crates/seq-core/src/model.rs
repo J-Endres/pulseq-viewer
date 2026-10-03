@@ -8,6 +8,7 @@ use num_complex::Complex64;
 
 use pulseq_rs::{int, seq};
 
+use crate::labels::Labels;
 use crate::loops::{Grammar, TokenDef};
 
 /// Larmor frequency used for the interpreted sequence `[Hz]` (1H at 3 T).
@@ -112,6 +113,7 @@ pub struct Analysis {
     pub channel_max: [f64; CHANNELS],
     /// Per block and channel: (min, max) in display units, NaN if absent.
     summary: Vec<[[f32; 2]; CHANNELS]>,
+    pub labels: Labels,
     grammar: Grammar,
     /// Compressed top-level token string.
     top: Vec<u32>,
@@ -129,6 +131,7 @@ impl Analysis {
             int::Sequence::from_seq(&parsed, int::Transform::default(), LARMOR, HashMap::new())
                 .map_err(|e| e.to_string())?;
         let warnings = warnings.iter().map(|w| w.to_string()).collect();
+        let labels = Labels::from_seq(&parsed);
         drop(parsed);
 
         let blocks = seq.blocks;
@@ -195,6 +198,7 @@ impl Analysis {
             display_duration: 0.0,
             channel_max,
             summary,
+            labels,
             grammar,
             top,
             delay_cap,
@@ -338,6 +342,20 @@ impl Analysis {
         let real_dur = self.blocks[b].duration;
         let into = (t - leaf.disp_start) * real_dur / leaf.disp_dur;
         Some((b, self.block_start[b] + into, leaf.disp_start))
+    }
+
+    /// `(display start, label event)` of blocks with label operations in
+    /// `[t0, t1]`, at most `max` of them.
+    pub fn label_marks(&self, iters: &[u32], t0: f64, t1: f64, max: usize) -> Vec<(f64, usize)> {
+        let starts = self.iteration_starts(iters);
+        self.visible(t0, t1)
+            .iter()
+            .filter_map(|l| {
+                let e = self.labels.event(self.resolve(&starts, l))?;
+                Some((l.disp_start, e))
+            })
+            .take(max)
+            .collect()
     }
 
     /// `(display start, display end, real duration)` of collapsed delay

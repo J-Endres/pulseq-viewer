@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pulseq Viewer</title>
     <link rel="icon" href="data:," />
+    <script>
+      // Apply the saved theme before first paint (same rules as src/theme.ts).
+      (function () {
+        var t = "system";
+        try {
+          t = localStorage.getItem("theme") || "system";
+        } catch (e) {}
+        if (t === "system") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = t;
+      })();
+    </script>
   </head>
   <body>
     <header>
@@ -21,6 +32,7 @@
         Collapse delays
       </label>
       <span id="file-name" class="muted"></span>
+      <select id="theme" class="button theme" aria-label="Colour theme"></select>
     </header>
     <main>
       <section class="plot-pane">
@@ -34,12 +46,19 @@
         </footer>
       </section>
       <aside>
-        <h2>Loops</h2>
-        <div id="loops"><p class="muted">No sequence loaded.</p></div>
+        <section id="loops-section">
+          <h2>Loops</h2>
+          <div id="loops"><p class="muted">No sequence loaded.</p></div>
+        </section>
+        <section id="labels-section" hidden>
+          <h2 id="labels-title">Labels</h2>
+          <dl id="labels"></dl>
+        </section>
         <p class="help muted">
           Scroll over a loop bracket to step through iterations. Click a bracket, then use the arrow keys.
           Scroll or pinch to zoom, drag to pan, double-click or double-tap to reset. Collapsed delays are shaded and
-          labelled with their real duration.
+          labelled with their real duration. While hovering the plot, this panel shows the label values at the
+          pointer.
         </p>
       </aside>
     </main>

@@ -1,17 +1,20 @@
 import type { State } from "./state.ts";
 
-/** Channel rows, in the order `Viewer.waveforms` returns them. */
-const ROWS = [
-  { label: "RF", unit: "Hz", color: "--ch-rf", weight: 1, symmetric: false },
-  { label: "Phase", unit: "rad", color: "--ch-phase", weight: 0.7, symmetric: true },
+type Legend = readonly (readonly [string, string])[];
+
+/** Rows; row i shows channel i of `Viewer.waveforms`. */
+const ROWS: readonly { label: string; unit: string; color: string; weight: number; symmetric: boolean; legend?: Legend }[] = [
+  { label: "RF", unit: "Hz", color: "--ch-rf", weight: 1, symmetric: false, legend: [["RF", "--ch-rf"], ["ADC", "--ch-adc"]] },
+  { label: "Phase", unit: "rad", color: "--ch-phase", weight: 0.7, symmetric: true, legend: [["RF", "--ch-phase"], ["ADC", "--ch-adc"]] },
   { label: "Gx", unit: "kHz/m", color: "--ch-gx", weight: 1, symmetric: true },
   { label: "Gy", unit: "kHz/m", color: "--ch-gy", weight: 1, symmetric: true },
   { label: "Gz", unit: "kHz/m", color: "--ch-gz", weight: 1, symmetric: true },
-  { label: "ADC", unit: "", color: "--ch-adc", weight: 0.35, symmetric: false },
-] as const;
+];
+const RF_ROW = 0;
 const PHASE_ROW = 1;
-const ADC_ROW = 5;
-/** Extra channel after the rows: receiver phase, drawn in the phase row. */
+/** Channels without a row of their own: ADC windows (drawn in the RF row,
+ * which they never overlap) and receiver phase (drawn in the phase row). */
+const ADC = 5;
 const ADC_PHASE = 6;
 
 /** Layout in CSS pixels. */
@@ -21,6 +24,8 @@ const BRACKET_ROW = 22;
 const BRACKET_TOP = 6;
 const AXIS = 34;
 const ROW_GAP = 8;
+/** Height of the label row, shown only for sequences with labels. */
+const LABEL_ROW = 22;
 
 interface Rect {
   x: number;
@@ -44,6 +49,7 @@ export class Plot {
   private dpr = 1;
   private frame = 0;
   private channelMax: Float64Array;
+  private hasLabels: boolean;
   /** Bracket hit boxes from the last draw. */
   brackets: Bracket[] = [];
 
@@ -55,6 +61,7 @@ export class Plot {
     if (!ctx) throw new Error("Canvas 2D is not available");
     this.ctx = ctx;
     this.channelMax = state.viewer.channel_max();
+    this.hasLabels = state.viewer.label_names().length > 0;
   }
 
   resize(width: number, height: number): void {
@@ -112,10 +119,18 @@ export class Plot {
     return -1;
   }
 
+  /** Label row at the bottom of the plot area, or null without labels. */
+  private labelRow(): Rect | null {
+    if (!this.hasLabels) return null;
+    const a = this.area;
+    return { x: a.x, y: a.y + a.h - LABEL_ROW, w: a.w, h: LABEL_ROW };
+  }
+
   private rows(): Rect[] {
     const a = this.area;
     const total = ROWS.reduce((s, r) => s + r.weight, 0);
-    const free = a.h - ROW_GAP * (ROWS.length - 1);
+    const labels = this.hasLabels ? LABEL_ROW + ROW_GAP : 0;
+    const free = a.h - labels - ROW_GAP * (ROWS.length - 1);
     let y = a.y;
     return ROWS.map((r) => {
       const h = (free * r.weight) / total;
@@ -166,8 +181,11 @@ export class Plot {
       ctx.beginPath();
       ctx.rect(rect.x, rect.y - 1, rect.w, rect.h + 2);
       ctx.clip();
-      if (ch === ADC_ROW) this.drawAdc(slice, columns, rect, color(row.color));
-      else this.drawEnvelope(slice, columns, rect, this.yScale(ch, rect), color(row.color));
+      if (ch === RF_ROW) {
+        const adc = data.subarray(ADC * columns * 2, (ADC + 1) * columns * 2);
+        this.drawAdc(adc, columns, rect, this.yScale(ch, rect), color("--ch-adc"));
+      }
+      this.drawEnvelope(slice, columns, rect, this.yScale(ch, rect), color(row.color));
       if (ch === PHASE_ROW) {
         const adcPhase = data.subarray(ADC_PHASE * columns * 2, (ADC_PHASE + 1) * columns * 2);
         this.drawEnvelope(adcPhase, columns, rect, this.yScale(ch, rect), color("--ch-adc"));
@@ -175,6 +193,7 @@ export class Plot {
       ctx.restore();
     });
 
+    this.drawLabels(color);
     this.drawAxis(color);
 
     // Hover line
@@ -224,9 +243,59 @@ export class Plot {
       const label = formatSeconds(d[i + 2]!);
       if (ctx.measureText(label).width + 6 <= x1 - x0) {
         ctx.fillStyle = color("--text-muted");
-        ctx.fillText(label, (x0 + x1) / 2, a.y + a.h - 2);
+        // Above the label row, which has text of its own
+        ctx.fillText(label, (x0 + x1) / 2, (this.labelRow()?.y ?? a.y + a.h) - 2);
       }
     }
+    ctx.restore();
+  }
+
+  /** Label row: a tick at every block that sets or increments labels, with
+   * its operations as text where there is room before the next tick. */
+  private drawLabels(color: (n: string) => string): void {
+    const rect = this.labelRow();
+    if (!rect) return;
+    const { ctx, state } = this;
+    const font = getComputedStyle(this.canvas).fontFamily;
+    ctx.fillStyle = color("--text");
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.font = `600 12px ${font}`;
+    ctx.fillText("Labels", 8, rect.y + rect.h / 2);
+    ctx.strokeStyle = color("--grid");
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(rect.x, Math.round(rect.y) + 0.5);
+    ctx.lineTo(rect.x + rect.w, Math.round(rect.y) + 0.5);
+    ctx.stroke();
+
+    const marks = state.viewer.label_marks(state.iters, state.t0, state.t1, 2000);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.x, rect.y, rect.w, rect.h);
+    ctx.clip();
+    ctx.font = `11px ${font}`;
+    const xs: number[] = [];
+    for (let i = 0; i < marks.length; i += 2) xs.push(Math.round(this.xAt(marks[i]!)) + 0.5);
+    ctx.strokeStyle = color("--accent");
+    ctx.beginPath();
+    for (const x of xs) {
+      ctx.moveTo(x, rect.y + 3);
+      ctx.lineTo(x, rect.y + rect.h - 3);
+    }
+    ctx.stroke();
+    ctx.fillStyle = color("--text-muted");
+    xs.forEach((x, k) => {
+      const end = Math.min(xs[k + 1] ?? Infinity, rect.x + rect.w) - 6;
+      const room = end - (x + 4);
+      if (room < 24) return;
+      let text = state.viewer.label_text(marks[2 * k + 1]!);
+      if (ctx.measureText(text).width > room) {
+        while (text.length > 1 && ctx.measureText(`${text}…`).width > room) text = text.slice(0, -1);
+        text += "…";
+      }
+      ctx.fillText(text, x + 4, rect.y + rect.h / 2);
+    });
     ctx.restore();
   }
 
@@ -251,21 +320,20 @@ export class Plot {
       ctx.fillStyle = color("--text-muted");
       ctx.fillText(row.unit, 8, rect.y + Math.min(24, rect.h / 2 + 12));
     }
-    if (ch === PHASE_ROW && rect.h >= 56) {
+    if (row.legend && rect.h >= 56) {
       // Legend: colour swatch next to text in text colour
-      [["RF", "--ch-phase"], ["ADC", "--ch-adc"]].forEach(([name, swatch], i) => {
+      row.legend.forEach(([name, swatch], i) => {
         const y = rect.y + 38 + i * 13;
-        ctx.strokeStyle = color(swatch!);
+        ctx.strokeStyle = color(swatch);
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(8, y);
         ctx.lineTo(18, y);
         ctx.stroke();
         ctx.fillStyle = color("--text-muted");
-        ctx.fillText(name!, 22, y);
+        ctx.fillText(name, 22, y);
       });
     }
-    if (ch === ADC_ROW) return;
 
     // Zero line and y labels
     const y = this.yScale(ch, rect);
@@ -321,13 +389,15 @@ export class Plot {
     ctx.stroke();
   }
 
-  private drawAdc(d: Float32Array, columns: number, rect: Rect, fill: string): void {
+  /** ADC windows as a band rising from the zero line, plus sample ticks. */
+  private drawAdc(d: Float32Array, columns: number, rect: Rect, y: (v: number) => number, fill: string): void {
     const { ctx, state } = this;
     const step = rect.w / columns;
-    const top = rect.y + rect.h * 0.2;
-    const h = rect.h * 0.6;
+    const bottom = y(0);
+    const top = rect.y + (bottom - rect.y) * 0.45;
+    const h = bottom - top;
     ctx.fillStyle = fill;
-    ctx.globalAlpha = 0.35;
+    ctx.globalAlpha = 0.25;
     let start = -1;
     for (let c = 0; c <= columns; c++) {
       const on = c < columns && !Number.isNaN(d[2 * c]!);
