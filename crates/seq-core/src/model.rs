@@ -401,6 +401,41 @@ impl Analysis {
             .collect()
     }
 
+    /// Piecewise mapping from display to real time over `[t0, t1]` for the
+    /// given iterations: `(display start, display end, real start)`, real time
+    /// advancing at the display rate within a piece. A collapsed delay is cut
+    /// at its centre: its first half continues the real time before it, its
+    /// second half leads into the real time after it. Consecutive pieces
+    /// whose real times continue each other are merged, so every boundary
+    /// between pieces is a jump in real time (a collapsed delay's centre, or a
+    /// loop at another iteration than the one displayed before or after it).
+    pub fn time_segments(&self, iters: &[u32], t0: f64, t1: f64) -> Vec<(f64, f64, f64)> {
+        let starts = self.iteration_starts(iters);
+        let mut out: Vec<(f64, f64, f64)> = Vec::new();
+        let mut push = |d0: f64, d1: f64, real: f64| {
+            if let Some(last) = out.last_mut()
+                && (last.2 + (d0 - last.0) - real).abs() < 1e-9
+            {
+                last.1 = d1;
+                return;
+            }
+            out.push((d0, d1, real));
+        };
+        for leaf in self.visible(t0, t1) {
+            let b = self.resolve(&starts, leaf);
+            let real = self.block_start[b];
+            let (d0, d1) = (leaf.disp_start, leaf.disp_start + leaf.disp_dur);
+            if leaf.collapsed {
+                let mid = (d0 + d1) / 2.0;
+                push(d0, mid, real);
+                push(mid, d1, real + self.blocks[b].duration - (d1 - mid));
+            } else {
+                push(d0, d1, real);
+            }
+        }
+        out
+    }
+
     /// `(display start, display end, real duration)` of collapsed delay
     /// blocks overlapping `[t0, t1]`, at most `max` of them.
     pub fn collapsed(&self, iters: &[u32], t0: f64, t1: f64, max: usize) -> Vec<[f64; 3]> {

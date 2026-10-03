@@ -7,6 +7,7 @@ const THEMES = [
   ["solarized-dark", "Solarized Dark"],
   ["nord", "Nord"],
   ["dracula", "Dracula"],
+  ["paper", "Paper"],
 ] as const;
 
 const STORAGE_KEY = "theme";

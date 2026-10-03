@@ -165,13 +165,24 @@ fn hover_over_stacked_loops() {
     let leaf = a
         .leaves
         .iter()
-        .find(|l| l.parent == 1 && a.blocks[(inner.first_block + l.offset) as usize].adc.is_some())
+        .find(|l| {
+            l.parent == 1
+                && a.blocks[(inner.first_block + l.offset) as usize]
+                    .adc
+                    .is_some()
+        })
         .unwrap();
     let t = leaf.disp_start + leaf.disp_dur / 2.0;
     let iters = [0, 0];
     assert_eq!(a.hover_blocks(&iters, &[0, 0], t).len(), 1);
-    assert_eq!(a.hover_blocks(&iters, &[0, 1], t).len(), inner.count as usize);
-    assert_eq!(a.hover_blocks(&iters, &[1, 0], t).len(), outer.count as usize);
+    assert_eq!(
+        a.hover_blocks(&iters, &[0, 1], t).len(),
+        inner.count as usize
+    );
+    assert_eq!(
+        a.hover_blocks(&iters, &[1, 0], t).len(),
+        outer.count as usize
+    );
     assert_eq!(
         a.hover_blocks(&iters, &[1, 1], t).len(),
         (outer.count * inner.count) as usize
@@ -185,4 +196,30 @@ fn hover_over_stacked_loops() {
         .collect();
     lins.sort();
     assert_eq!(lins, (0..96).collect::<Vec<_>>());
+}
+
+#[test]
+fn time_segments_follow_real_time() {
+    let mut a = load("flash_je.seq");
+    a.set_collapse_delays(true);
+    let end = a.display_duration;
+    let delay = &a.leaves[0];
+    let mid = delay.disp_dur / 2.0;
+    // Iteration 0: the collapsed delay is cut at its centre; afterwards real
+    // time runs without further jumps through the whole loop.
+    let s = a.time_segments(&[0], 0.0, end);
+    assert_eq!(s.len(), 2, "{s:?}");
+    assert_eq!((s[0].0, s[0].2), (0.0, 0.0));
+    assert!((s[0].1 - mid).abs() < 1e-12);
+    // Second half ends exactly where block 1 starts.
+    assert!((s[1].2 + (delay.disp_dur - mid) - a.block_start[1]).abs() < 1e-9);
+    // Iteration 5: an extra jump at the loop start.
+    let l = &a.loops[0];
+    let s = a.time_segments(&[5], 0.0, end);
+    let piece = s
+        .iter()
+        .find(|p| (p.0 - l.disp_start).abs() < 1e-12)
+        .unwrap();
+    let first = (l.first_block + 5 * l.blocks_per_iter) as usize;
+    assert!((piece.2 - a.block_start[first]).abs() < 1e-12);
 }

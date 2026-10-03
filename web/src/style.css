@@ -20,6 +20,10 @@
   --ch-adc: #008300;
   --cmap-from: 0;
   --cmap-to: 0.85;
+  /* Canvas: "paper" switches to framed, publication-style axes */
+  --plot-style: screen;
+  --plot-font: ;
+  --axis: #000000;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: light;
 }
@@ -144,6 +148,34 @@
   color-scheme: dark;
 }
 
+:root[data-theme="paper"] {
+  --surface: #ffffff;
+  --panel: #f5f5f5;
+  --text: #000000;
+  --text-muted: #444444;
+  --border: #cccccc;
+  --grid: #d9d9d9;
+  --accent: #1f77b4;
+  --bracket: #000000;
+  --loop-tint: rgba(0, 0, 0, 0);
+  --loop-tint-focus: rgba(31, 119, 180, 0.06);
+  --error: #d62728;
+  --collapsed: rgba(0, 0, 0, 0);
+  /* matplotlib tab10 */
+  --ch-rf: #1f77b4;
+  --ch-phase: #9467bd;
+  --ch-gx: #d62728;
+  --ch-gy: #2ca02c;
+  --ch-gz: #ff7f0e;
+  --ch-adc: #7f7f7f;
+  --cmap-from: 0;
+  --cmap-to: 0.9;
+  --plot-style: paper;
+  --plot-font: Arial, "Helvetica Neue", Helvetica, "Liberation Sans", sans-serif;
+  --axis: #000000;
+  color-scheme: light;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -214,13 +246,19 @@ h2 {
   accent-color: var(--accent);
 }
 
-select.button {
+select.button,
+button.button {
   color: inherit;
   font: inherit;
   font-size: 0.9rem;
 }
 
-.button:hover {
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.button:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
