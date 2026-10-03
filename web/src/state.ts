@@ -26,8 +26,10 @@ export type Change = "iters" | "view" | "focus" | "hover" | "layout";
 export class State {
   loops: Loop[];
   readonly maxDepth: number;
-  /** Current iteration of every loop (stack mode). */
+  /** Current iteration of every loop. */
   readonly iters: Uint32Array;
+  /** 1 for loops shown with all iterations overlaid. */
+  readonly stacked: Uint8Array;
   /** Visible display-time window [s]. */
   t0 = 0;
   t1 = 1;
@@ -42,6 +44,7 @@ export class State {
     this.loops = parseLoops(viewer.loops());
     this.maxDepth = this.loops.reduce((m, l) => Math.max(m, l.depth), -1);
     this.iters = new Uint32Array(this.loops.length);
+    this.stacked = new Uint8Array(this.loops.length);
     this.resetView();
   }
 
@@ -72,6 +75,17 @@ export class State {
     if (this.iters[id] === clamped) return;
     this.iters[id] = clamped;
     this.emit("iters");
+  }
+
+  /** Overlay all iterations of a loop instead of showing one. */
+  setStacked(id: number, on: boolean): void {
+    if (id < 0 || id >= this.stacked.length || Boolean(this.stacked[id]) === on) return;
+    this.stacked[id] = on ? 1 : 0;
+    this.emit("iters");
+  }
+
+  get anyStacked(): boolean {
+    return this.stacked.some((s) => s !== 0);
   }
 
   stepIter(id: number, delta: number): void {

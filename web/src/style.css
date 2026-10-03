@@ -18,11 +18,15 @@
   --ch-gy: #1baf7a;
   --ch-gz: #e87ba4;
   --ch-adc: #008300;
+  --cmap-from: 0;
+  --cmap-to: 0.85;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: light;
 }
 
 :root[data-theme="dark"] {
+  --cmap-from: 0.25;
+  --cmap-to: 1;
   --surface: #1a1a19;
   --panel: #222220;
   --text: #ffffff;
@@ -45,6 +49,8 @@
 }
 
 :root[data-theme="solarized-light"] {
+  --cmap-from: 0;
+  --cmap-to: 0.85;
   --surface: #fdf6e3;
   --panel: #eee8d5;
   --text: #073642;
@@ -67,6 +73,8 @@
 }
 
 :root[data-theme="solarized-dark"] {
+  --cmap-from: 0.25;
+  --cmap-to: 1;
   --surface: #002b36;
   --panel: #073642;
   --text: #eee8d5;
@@ -89,6 +97,8 @@
 }
 
 :root[data-theme="nord"] {
+  --cmap-from: 0.25;
+  --cmap-to: 1;
   --surface: #2e3440;
   --panel: #3b4252;
   --text: #eceff4;
@@ -111,6 +121,8 @@
 }
 
 :root[data-theme="dracula"] {
+  --cmap-from: 0.25;
+  --cmap-to: 1;
   --surface: #282a36;
   --panel: #21222c;
   --text: #f8f8f2;
@@ -310,6 +322,55 @@ aside {
 .loop.focused {
   border-color: var(--accent);
   background: var(--surface);
+}
+
+.loop-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.stack-toggle {
+  flex: none;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.stack-toggle:hover {
+  border-color: var(--accent);
+}
+
+.stack-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.loop-scale {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.loop-scale[hidden],
+.loop-input[hidden] {
+  display: none;
+}
+
+.loop-scale .bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
 }
 
 .loop-head {

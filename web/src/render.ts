@@ -1,3 +1,4 @@
+import { cmap } from "./colormap.ts";
 import type { State } from "./state.ts";
 
 type Legend = readonly (readonly [string, string])[];
@@ -24,6 +25,8 @@ const BRACKET_ROW = 22;
 const BRACKET_TOP = 6;
 const AXIS = 34;
 const ROW_GAP = 8;
+/** Most iteration combinations drawn for stacked loops. */
+const MAX_COMBOS = 256;
 /** Height of the label row, shown only for sequences with labels. */
 const LABEL_ROW = 22;
 
@@ -32,6 +35,21 @@ interface Rect {
   y: number;
   w: number;
   h: number;
+}
+
+/** A display-time interval owned by the innermost stacked loop covering it (-1: none). */
+interface Owned {
+  t0: number;
+  t1: number;
+  loop: number;
+}
+
+/** What to draw for stacked loops in the current view. */
+interface StackPlan {
+  owned: Owned[];
+  /** Visible stacked loops and the iterations drawn for each. */
+  loops: number[];
+  iters: number[][];
 }
 
 export interface Bracket {
@@ -52,6 +70,7 @@ export class Plot {
   private hasLabels: boolean;
   /** Bracket hit boxes from the last draw. */
   brackets: Bracket[] = [];
+  private plan: StackPlan = { owned: [], loops: [], iters: [] };
 
   constructor(
     readonly canvas: HTMLCanvasElement,
@@ -153,6 +172,8 @@ export class Plot {
     const a = this.area;
     const rows = this.rows();
 
+    this.plan = this.stackPlan();
+
     // Loop tints behind the rows
     ctx.save();
     ctx.beginPath();
@@ -170,28 +191,29 @@ export class Plot {
     this.drawCollapsed(color);
     this.drawBrackets(color);
 
-    // Waveforms
+    // Waveforms: one pass for the current iterations outside stacked loops,
+    // then one per iteration combination inside them.
+    const free = this.plan.owned.filter((o) => o.loop < 0);
     const columns = Math.max(1, Math.round(a.w * this.dpr));
     const data = state.viewer.waveforms(state.iters, state.t0, state.t1, columns);
+    const span = { x: a.x, w: a.w };
     rows.forEach((rect, ch) => {
       const row = ROWS[ch]!;
       this.drawRowFrame(rect, ch, color);
-      const slice = data.subarray(ch * columns * 2, (ch + 1) * columns * 2);
       ctx.save();
-      ctx.beginPath();
-      ctx.rect(rect.x, rect.y - 1, rect.w, rect.h + 2);
-      ctx.clip();
+      this.clip(rect, [{ t0: state.t0, t1: state.t1, loop: -1 }]);
       if (ch === RF_ROW) {
-        const adc = data.subarray(ADC * columns * 2, (ADC + 1) * columns * 2);
+        // ADC windows don't change between iterations: drawn once everywhere.
+        const adc = channel(data, ADC, columns);
         this.drawAdc(adc, columns, rect, this.yScale(ch, rect), color("--ch-adc"));
       }
-      this.drawEnvelope(slice, columns, rect, this.yScale(ch, rect), color(row.color));
-      if (ch === PHASE_ROW) {
-        const adcPhase = data.subarray(ADC_PHASE * columns * 2, (ADC_PHASE + 1) * columns * 2);
-        this.drawEnvelope(adcPhase, columns, rect, this.yScale(ch, rect), color("--ch-adc"));
-      }
+      this.clip(rect, free);
+      const y = this.yScale(ch, rect);
+      this.drawEnvelope(channel(data, ch, columns), columns, span, y, color(row.color));
+      if (ch === PHASE_ROW) this.drawEnvelope(channel(data, ADC_PHASE, columns), columns, span, y, color("--ch-adc"));
       ctx.restore();
     });
+    this.drawOverlay(rows, css);
 
     this.drawLabels(color);
     this.drawAxis(color);
@@ -209,6 +231,109 @@ export class Plot {
         ctx.stroke();
         ctx.setLineDash([]);
       }
+    }
+  }
+
+  /** Intervals of the view owned by stacked loops, and the iterations to draw. */
+  private stackPlan(): StackPlan {
+    const { state } = this;
+    const { t0, t1 } = state;
+    const loops = state.loops.filter(
+      (l) => state.stacked[l.id] && l.dispStart < t1 && l.dispStart + l.dispDur > t0,
+    );
+    if (loops.length === 0) return { owned: [{ t0, t1, loop: -1 }], loops: [], iters: [] };
+
+    const bounds = [t0, t1, ...loops.flatMap((l) => [l.dispStart, l.dispStart + l.dispDur])]
+      .filter((t) => t >= t0 && t <= t1)
+      .sort((p, q) => p - q);
+    const owned: Owned[] = [];
+    for (let i = 0; i + 1 < bounds.length; i++) {
+      const [p, q] = [bounds[i]!, bounds[i + 1]!];
+      if (q <= p) continue;
+      const mid = (p + q) / 2;
+      let owner = -1;
+      for (const l of loops) {
+        const inside = l.dispStart <= mid && mid < l.dispStart + l.dispDur;
+        if (inside && (owner < 0 || l.depth > state.loops[owner]!.depth)) owner = l.id;
+      }
+      const last = owned[owned.length - 1];
+      if (last && last.loop === owner) last.t1 = q;
+      else owned.push({ t0: p, t1: q, loop: owner });
+    }
+
+    // Halve the largest per-loop sample count until the combinations fit.
+    const n = loops.map((l) => l.count);
+    while (n.reduce((p, c) => p * c, 1) > MAX_COMBOS) {
+      const k = n.indexOf(Math.max(...n));
+      n[k] = Math.ceil(n[k]! / 2);
+    }
+    const iters = loops.map((l, i) => {
+      const m = n[i]!;
+      if (m >= l.count) return Array.from({ length: l.count }, (_, k) => k);
+      const picks = Array.from({ length: m }, (_, k) => Math.round((k * (l.count - 1)) / Math.max(1, m - 1)));
+      return [...new Set(picks)];
+    });
+    return { owned, loops: loops.map((l) => l.id), iters };
+  }
+
+  /** Iterations drawn for a stacked loop in the last draw, or null if not drawn. */
+  shownIterations(loop: number): number | null {
+    const i = this.plan.loops.indexOf(loop);
+    return i < 0 ? null : this.plan.iters[i]!.length;
+  }
+
+  /** Clip to the parts of a row inside the given intervals. */
+  private clip(rect: Rect, intervals: Owned[]): void {
+    const { ctx } = this;
+    ctx.beginPath();
+    for (const o of intervals) {
+      const x0 = Math.max(rect.x, this.xAt(o.t0));
+      const x1 = Math.min(rect.x + rect.w, this.xAt(o.t1));
+      if (x1 > x0) ctx.rect(x0, rect.y - 1, x1 - x0, rect.h + 2);
+    }
+    ctx.clip();
+  }
+
+  /** All drawn iteration combinations inside stacked intervals, coloured by
+   * the iteration of the loop owning each interval. */
+  private drawOverlay(rows: Rect[], css: CSSStyleDeclaration): void {
+    const { ctx, state, plan } = this;
+    const owned = plan.owned.filter((o) => o.loop >= 0);
+    if (owned.length === 0) return;
+    const ta = owned[0]!.t0;
+    const tb = owned[owned.length - 1]!.t1;
+    const span = { x: this.xAt(ta), w: this.xAt(tb) - this.xAt(ta) };
+    const columns = Math.max(1, Math.round(span.w * this.dpr));
+    const iters = state.iters.slice();
+    const idx = plan.loops.map(() => 0);
+    for (;;) {
+      plan.loops.forEach((id, i) => (iters[id] = plan.iters[i]![idx[i]!]!));
+      const data = state.viewer.waveforms(iters, ta, tb, columns);
+      for (const o of owned) {
+        const loop = state.loops[o.loop]!;
+        const stroke = cmap(loop.count > 1 ? iters[o.loop]! / (loop.count - 1) : 0, css);
+        rows.forEach((rect, ch) => {
+          ctx.save();
+          this.clip(rect, [o]);
+          const y = this.yScale(ch, rect);
+          this.drawEnvelope(channel(data, ch, columns), columns, span, y, stroke, 1.25);
+          if (ch === PHASE_ROW) {
+            // Dashed, to tell receiver from RF phase without the channel colours
+            ctx.setLineDash([3, 2]);
+            this.drawEnvelope(channel(data, ADC_PHASE, columns), columns, span, y, stroke, 1.25);
+            ctx.setLineDash([]);
+          }
+          ctx.restore();
+        });
+      }
+      // Next combination (odometer)
+      let k = 0;
+      for (; k < idx.length; k++) {
+        idx[k]!++;
+        if (idx[k]! < plan.iters[k]!.length) break;
+        idx[k] = 0;
+      }
+      if (k === idx.length) break;
     }
   }
 
@@ -285,7 +410,12 @@ export class Plot {
     }
     ctx.stroke();
     ctx.fillStyle = color("--text-muted");
+    // Inside stacked loops the text would only describe the current iteration;
+    // the hover panel lists all values there instead.
+    const stackedAt = (x: number) =>
+      this.plan.owned.some((o) => o.loop >= 0 && this.xAt(o.t0) <= x && x < this.xAt(o.t1));
     xs.forEach((x, k) => {
+      if (stackedAt(x)) return;
       const end = Math.min(xs[k + 1] ?? Infinity, rect.x + rect.w) - 6;
       const room = end - (x + 4);
       if (room < 24) return;
@@ -354,30 +484,50 @@ export class Plot {
     }
   }
 
+  /** Per-column (min, max) envelope over the horizontal span `span`. */
   private drawEnvelope(
     d: Float32Array,
     columns: number,
-    rect: Rect,
+    span: { x: number; w: number },
     y: (v: number) => number,
     stroke: string,
+    width = 1.5,
   ): void {
     const { ctx } = this;
-    const step = rect.w / columns;
+    const step = span.w / columns;
     ctx.strokeStyle = stroke;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = width;
     ctx.lineJoin = "round";
     ctx.beginPath();
     let drawing = false;
     let lastY = 0;
+    let prevLo = NaN;
+    let prevHi = NaN;
+    // End x of a run of identical flat columns not yet drawn
+    let flatEnd: number | null = null;
+    const flush = () => {
+      if (flatEnd !== null) ctx.lineTo(flatEnd, lastY);
+      flatEnd = null;
+    };
     for (let c = 0; c < columns; c++) {
       const lo = d[2 * c]!;
+      const hi = d[2 * c + 1]!;
       if (Number.isNaN(lo)) {
+        flush();
         drawing = false;
+        prevLo = NaN;
         continue;
       }
-      const x = rect.x + (c + 0.5) * step;
+      const x = span.x + (c + 0.5) * step;
+      if (drawing && lo === hi && lo === prevLo && hi === prevHi) {
+        flatEnd = x;
+        continue;
+      }
+      flush();
+      prevLo = lo;
+      prevHi = hi;
       const yLo = y(lo);
-      const yHi = y(d[2 * c + 1]!);
+      const yHi = y(hi);
       // Enter the column at the end nearer the previous point.
       const [first, second] = Math.abs(yLo - lastY) < Math.abs(yHi - lastY) ? [yLo, yHi] : [yHi, yLo];
       if (drawing) ctx.lineTo(x, first);
@@ -386,6 +536,7 @@ export class Plot {
       lastY = second;
       drawing = true;
     }
+    flush();
     ctx.stroke();
   }
 
@@ -436,8 +587,16 @@ export class Plot {
       const y = BRACKET_TOP + loop.depth * BRACKET_ROW + BRACKET_ROW / 2;
       this.brackets.push({ loop: loop.id, x0, x1, y });
       const focused = loop.id === state.focused;
+      const stacked = state.stacked[loop.id] === 1;
       ctx.strokeStyle = color(focused ? "--accent" : "--bracket");
-      ctx.lineWidth = focused ? 2 : 1.25;
+      if (stacked) {
+        // Colour scale of the overlaid iterations
+        const css = getComputedStyle(this.canvas);
+        const grad = ctx.createLinearGradient(x0, 0, x1, 0);
+        for (let i = 0; i <= 8; i++) grad.addColorStop(i / 8, cmap(i / 8, css));
+        ctx.strokeStyle = grad;
+      }
+      ctx.lineWidth = focused || stacked ? 2 : 1.25;
       ctx.beginPath();
       ctx.moveTo(x0 + 0.5, y + 6);
       ctx.lineTo(x0 + 0.5, y);
@@ -446,8 +605,14 @@ export class Plot {
       ctx.stroke();
 
       const iter = (state.iters[loop.id] ?? 0) + 1;
-      const label = `Loop ${loop.name} · ${iter} / ${loop.count}`;
-      const short = `${iter}/${loop.count}`;
+      const shown = this.shownIterations(loop.id);
+      const which = !stacked
+        ? `${iter} / ${loop.count}`
+        : shown !== null && shown < loop.count
+          ? `${shown} of ${loop.count}`
+          : `all ${loop.count}`;
+      const label = `Loop ${loop.name} · ${which}`;
+      const short = stacked ? which : `${iter}/${loop.count}`;
       const visible0 = Math.max(x0, a.x);
       const visible1 = Math.min(x1, a.x + a.w);
       const room = visible1 - visible0 - 8;
@@ -491,6 +656,11 @@ export class Plot {
     ctx.fillText("ms", GUTTER - 6, y);
     ctx.textBaseline = "middle";
   }
+}
+
+/** One channel of a `Viewer.waveforms` result. */
+function channel(data: Float32Array, ch: number, columns: number): Float32Array {
+  return data.subarray(ch * columns * 2, (ch + 1) * columns * 2);
 }
 
 function formatSeconds(s: number): string {

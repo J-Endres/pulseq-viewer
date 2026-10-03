@@ -1,14 +1,19 @@
+import { cmapGradient } from "./colormap.ts";
 import type { State } from "./state.ts";
 
-/** Loop panel: one slider and number field per loop, nested by depth. */
-export function buildLoopPanel(container: HTMLElement, state: State): void {
+/**
+ * Loop panel: per loop, nested by depth, a slider and number field for its
+ * iteration, or with Stack pressed a colour bar for its overlaid iterations.
+ * Returns a function that redraws theme-dependent colours.
+ */
+export function buildLoopPanel(container: HTMLElement, state: State): () => void {
   container.replaceChildren();
   if (state.loops.length === 0) {
     const empty = document.createElement("p");
     empty.className = "muted";
     empty.textContent = "No repeating blocks found.";
     container.append(empty);
-    return;
+    return () => {};
   }
 
   const items = state.loops.map((loop) => {
@@ -24,6 +29,16 @@ export function buildLoopPanel(container: HTMLElement, state: State): void {
     head.querySelector(".loop-meta")!.textContent =
       `×${loop.count} · ${loop.blocksPerIter} block${loop.blocksPerIter === 1 ? "" : "s"} · ${formatDuration(loop.iterDur)}`;
     head.addEventListener("click", () => state.setFocus(state.focused === loop.id ? -1 : loop.id));
+
+    const stack = document.createElement("button");
+    stack.type = "button";
+    stack.className = "stack-toggle";
+    stack.textContent = "Stack";
+    stack.title = "Overlay all iterations of this loop";
+    stack.addEventListener("click", () => state.setStacked(loop.id, !state.stacked[loop.id]));
+    const top = document.createElement("div");
+    top.className = "loop-top";
+    top.append(head, stack);
 
     const row = document.createElement("div");
     row.className = "loop-input";
@@ -49,19 +64,34 @@ export function buildLoopPanel(container: HTMLElement, state: State): void {
     number.addEventListener("focus", () => state.setFocus(loop.id));
     row.append(slider, number);
 
-    item.append(head, row);
+    // Shown instead of the slider while stacked: colour bar 1 … count
+    const scale = document.createElement("div");
+    scale.className = "loop-scale";
+    scale.innerHTML = `<span>1</span><span class="bar"></span><span></span>`;
+    scale.lastElementChild!.textContent = String(loop.count);
+    const bar = scale.querySelector<HTMLElement>(".bar")!;
+
+    item.append(top, row, scale);
     container.append(item);
-    return { item, slider, number };
+    return { item, slider, number, stack, row, scale, bar };
   });
 
   const sync = () => {
     state.loops.forEach((loop, i) => {
-      const { item, slider, number } = items[i]!;
+      const { item, slider, number, stack, row, scale } = items[i]!;
       const v = String((state.iters[loop.id] ?? 0) + 1);
       if (slider.value !== v) slider.value = v;
       if (number.value !== v && document.activeElement !== number) number.value = v;
       item.classList.toggle("focused", state.focused === loop.id);
+      const stacked = state.stacked[loop.id] === 1;
+      stack.setAttribute("aria-pressed", String(stacked));
+      row.hidden = stacked;
+      scale.hidden = !stacked;
     });
+  };
+  const recolor = () => {
+    const gradient = cmapGradient(getComputedStyle(container));
+    for (const { bar } of items) bar.style.background = gradient;
   };
   state.onChange((change) => {
     if (change === "iters" || change === "focus") sync();
@@ -70,6 +100,8 @@ export function buildLoopPanel(container: HTMLElement, state: State): void {
     }
   });
   sync();
+  recolor();
+  return recolor;
 }
 
 export function formatDuration(s: number): string {
