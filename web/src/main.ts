@@ -4,6 +4,7 @@ import { State } from "./state.ts";
 import { Plot } from "./render.ts";
 import { buildLoopPanel, formatDuration } from "./controls.ts";
 import { EXAMPLES, fetchExample } from "./examples.ts";
+import { initTheme } from "./theme.ts";
 
 const $ = <T extends HTMLElement>(sel: string) => {
   const el = document.querySelector<T>(sel);
@@ -25,6 +26,9 @@ const info = $("#info");
 const wasmReady = init();
 
 let current: { state: State; plot: Plot; dispose: () => void } | null = null;
+
+// The canvas reads its colours from CSS variables at draw time.
+initTheme($<HTMLSelectElement>("#theme"), () => current?.plot.request());
 
 function showMessage(text: string, kind: "hint" | "error" | "busy"): void {
   message.textContent = text;

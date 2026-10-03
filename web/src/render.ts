@@ -1,17 +1,20 @@
 import type { State } from "./state.ts";
 
-/** Channel rows, in the order `Viewer.waveforms` returns them. */
-const ROWS = [
-  { label: "RF", unit: "Hz", color: "--ch-rf", weight: 1, symmetric: false },
-  { label: "Phase", unit: "rad", color: "--ch-phase", weight: 0.7, symmetric: true },
+type Legend = readonly (readonly [string, string])[];
+
+/** Rows; row i shows channel i of `Viewer.waveforms`. */
+const ROWS: readonly { label: string; unit: string; color: string; weight: number; symmetric: boolean; legend?: Legend }[] = [
+  { label: "RF", unit: "Hz", color: "--ch-rf", weight: 1, symmetric: false, legend: [["RF", "--ch-rf"], ["ADC", "--ch-adc"]] },
+  { label: "Phase", unit: "rad", color: "--ch-phase", weight: 0.7, symmetric: true, legend: [["RF", "--ch-phase"], ["ADC", "--ch-adc"]] },
   { label: "Gx", unit: "kHz/m", color: "--ch-gx", weight: 1, symmetric: true },
   { label: "Gy", unit: "kHz/m", color: "--ch-gy", weight: 1, symmetric: true },
   { label: "Gz", unit: "kHz/m", color: "--ch-gz", weight: 1, symmetric: true },
-  { label: "ADC", unit: "", color: "--ch-adc", weight: 0.35, symmetric: false },
-] as const;
+];
+const RF_ROW = 0;
 const PHASE_ROW = 1;
-const ADC_ROW = 5;
-/** Extra channel after the rows: receiver phase, drawn in the phase row. */
+/** Channels without a row of their own: ADC windows (drawn in the RF row,
+ * which they never overlap) and receiver phase (drawn in the phase row). */
+const ADC = 5;
 const ADC_PHASE = 6;
 
 /** Layout in CSS pixels. */
@@ -166,8 +169,11 @@ export class Plot {
       ctx.beginPath();
       ctx.rect(rect.x, rect.y - 1, rect.w, rect.h + 2);
       ctx.clip();
-      if (ch === ADC_ROW) this.drawAdc(slice, columns, rect, color(row.color));
-      else this.drawEnvelope(slice, columns, rect, this.yScale(ch, rect), color(row.color));
+      if (ch === RF_ROW) {
+        const adc = data.subarray(ADC * columns * 2, (ADC + 1) * columns * 2);
+        this.drawAdc(adc, columns, rect, this.yScale(ch, rect), color("--ch-adc"));
+      }
+      this.drawEnvelope(slice, columns, rect, this.yScale(ch, rect), color(row.color));
       if (ch === PHASE_ROW) {
         const adcPhase = data.subarray(ADC_PHASE * columns * 2, (ADC_PHASE + 1) * columns * 2);
         this.drawEnvelope(adcPhase, columns, rect, this.yScale(ch, rect), color("--ch-adc"));
@@ -251,21 +257,20 @@ export class Plot {
       ctx.fillStyle = color("--text-muted");
       ctx.fillText(row.unit, 8, rect.y + Math.min(24, rect.h / 2 + 12));
     }
-    if (ch === PHASE_ROW && rect.h >= 56) {
+    if (row.legend && rect.h >= 56) {
       // Legend: colour swatch next to text in text colour
-      [["RF", "--ch-phase"], ["ADC", "--ch-adc"]].forEach(([name, swatch], i) => {
+      row.legend.forEach(([name, swatch], i) => {
         const y = rect.y + 38 + i * 13;
-        ctx.strokeStyle = color(swatch!);
+        ctx.strokeStyle = color(swatch);
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(8, y);
         ctx.lineTo(18, y);
         ctx.stroke();
         ctx.fillStyle = color("--text-muted");
-        ctx.fillText(name!, 22, y);
+        ctx.fillText(name, 22, y);
       });
     }
-    if (ch === ADC_ROW) return;
 
     // Zero line and y labels
     const y = this.yScale(ch, rect);
@@ -321,13 +326,15 @@ export class Plot {
     ctx.stroke();
   }
 
-  private drawAdc(d: Float32Array, columns: number, rect: Rect, fill: string): void {
+  /** ADC windows as a band rising from the zero line, plus sample ticks. */
+  private drawAdc(d: Float32Array, columns: number, rect: Rect, y: (v: number) => number, fill: string): void {
     const { ctx, state } = this;
     const step = rect.w / columns;
-    const top = rect.y + rect.h * 0.2;
-    const h = rect.h * 0.6;
+    const bottom = y(0);
+    const top = rect.y + (bottom - rect.y) * 0.45;
+    const h = bottom - top;
     ctx.fillStyle = fill;
-    ctx.globalAlpha = 0.35;
+    ctx.globalAlpha = 0.25;
     let start = -1;
     for (let c = 0; c <= columns; c++) {
       const on = c < columns && !Number.isNaN(d[2 * c]!);

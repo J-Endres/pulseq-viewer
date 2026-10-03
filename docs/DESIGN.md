@@ -48,6 +48,7 @@ web/                    Vite app
   src/render.ts         canvas renderer
   src/controls.ts       loop panel
   src/examples.ts       built-in example list
+  src/theme.ts          colour theme menu
   public/examples/      example .seq files, served with the site
 scripts/                generator for the long example sequence
   src/wasm/             wasm-bindgen output (generated, not committed)
@@ -218,8 +219,9 @@ Stack mode shows exactly one iteration of every loop at a time.
 ## Rendering
 
 - **One `<canvas>`** filling the plot area, sized with `devicePixelRatio` for
-  sharp lines. Rows from top to bottom: RF magnitude, phase (RF and ADC),
-  Gx, Gy, Gz, ADC. All rows share the display-time x-axis; each row has its label, unit,
+  sharp lines. Rows from top to bottom: RF magnitude (with ADC), phase (RF
+  and ADC), Gx, Gy, Gz. RF and ADC events never overlap in time, so the ADC
+  shares the RF row instead of taking a row of its own. All rows share the display-time x-axis; each row has its label, unit,
   zero line and min/max labels on the left.
 - **Units**: RF magnitude in Hz, RF phase in rad, gradients in kHz/m, time in
   ms.
@@ -234,13 +236,14 @@ Stack mode shows exactly one iteration of every loop at a time.
   - RF magnitude is `|amp| · |shape|`. RF phase is `arg(shape)` plus the
     event phase (plus π for a negative amplitude), wrapped to (−π, π], and
     drawn only where the magnitude is nonzero.
-  - ADC is drawn as a bar over each acquisition window, with one tick per
-    sample once samples are at least 4 px apart.
+  - ADC is drawn in the RF row as a translucent band from the zero line to
+    about half the row height over each acquisition window, with one tick per
+    sample once samples are at least 4 px apart. The RF and phase rows each
+    have a small RF/ADC legend in their label area.
   - ADC phase is the event phase plus the per-sample phase shape if there is
     one, wrapped to (−π, π], over the acquisition window. It is returned as
     a seventh envelope channel and drawn in the phase row in the ADC colour,
-    so receiver and RF phase share one axis; the row has a small RF/ADC
-    legend in its label area.
+    so receiver and RF phase share one axis.
   - Blocks narrower than two columns contribute a per-block, per-channel
     (min, max) summary computed at load time instead of their samples.
     Summaries use per-shape statistics cached by shape, since pulseq-rs shares
@@ -248,10 +251,15 @@ Stack mode shows exactly one iteration of every loop at a time.
 - The renderer draws each column as a vertical line from min to max,
   connected to the neighbouring columns, which shows a smooth curve when
   zoomed in and the filled extent of dense waveforms when zoomed out.
-- **Colours**: one fixed hue per channel (RF blue, RF phase violet, Gx
-  orange, Gy aqua, Gz magenta, ADC and ADC phase green), with separate light and dark values chosen
-  by `prefers-color-scheme`. Loop extents get a light background tint in all
-  rows.
+- **Colours and themes**: one fixed hue per channel (RF, RF phase, Gx, Gy,
+  Gz, ADC and ADC phase), all defined as CSS variables per theme and read by
+  the canvas at draw time. A header menu offers System (default), Light,
+  Dark, Solarized Light, Solarized Dark, Nord and Dracula; each theme takes
+  its channel colours from its own palette. `data-theme` on `<html>` always
+  holds a concrete theme: System resolves to Light or Dark and follows OS
+  changes. The choice is remembered per browser, and an inline script in
+  `index.html` applies it before first paint. Loop extents get a light
+  background tint in all rows.
 - **Navigation**: wheel zooms around the cursor, horizontal wheel and drag
   pan, double-click resets to the full timeline. On touch screens a
   two-finger pinch zooms around the fingers' midpoint (keeping the time under
