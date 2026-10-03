@@ -52,18 +52,15 @@ docs/DESIGN.md          this document
 
 1. The user picks a file (file input or drag and drop onto the page).
 2. The page reads it as text and passes it to wasm.
-3. `seq-core` builds two models with
+3. `seq-core` loads the file with
    [pulseq-rs](https://github.com/pulseq-frame/pulseq-rs), pinned as a git
-   dependency to a fixed revision:
-   - `seq::Sequence::from_source(&str)` — the parsed sequence. Gradients are
-     still distinguished as `Trap` or `Free`, which the block signature needs.
-   - `int::Sequence::from_seq(..)` — the interpreted sequence (FOV scaling,
-     rotations, soft delays applied), which is what gets plotted. It is built
-     with an identity transform, a 3 T Larmor frequency and an empty
-     soft-delay map.
+   dependency to a fixed revision: `seq::Sequence::from_source(&str)` parses
+   it, and `int::Sequence::from_seq(..)` turns it into the interpreted
+   sequence (FOV scaling, rotations and soft delays applied). It is built with
+   an identity transform, a 3 T Larmor frequency and an empty soft-delay map.
 
-   Both models have one entry per block in file order, so a block index refers
-   to the same block in both.
+   The interpreted sequence is the single model the viewer works with: loop
+   detection and plotting both read its blocks.
 4. Parse or interpretation errors are shown on the page with their message.
    `console_error_panic_hook` turns Rust panics into readable console errors.
 
@@ -71,24 +68,24 @@ docs/DESIGN.md          this document
 
 ### Block signature
 
-Each block is reduced to a signature that ignores everything but timing and
-structure:
+Each block of the interpreted sequence is reduced to a signature of its
+duration and which event channels it uses:
 
-| field          | value                                            |
-|----------------|--------------------------------------------------|
-| duration       | block duration in block-raster ticks (integer)   |
-| RF             | number of RF events (0 or 1)                     |
-| trap gradients | number of trapezoid gradients (0–3)              |
-| free gradients | number of arbitrary / extended gradients (0–3)   |
-| ADC            | number of ADC events (0 or 1)                    |
+| field    | value                                          |
+|----------|------------------------------------------------|
+| duration | block duration in block-raster ticks (integer) |
+| RF       | block has an RF event                          |
+| Gx       | block has a gradient on x                      |
+| Gy       | block has a gradient on y                      |
+| Gz       | block has a gradient on z                      |
+| ADC      | block has an ADC event                         |
 
-Channels, amplitudes, phases, frequencies, shapes, delays within the block,
-labels and extensions are not part of the signature. A block with a trapezoid
-on Gx and one with a trapezoid on Gy have the same signature; a block with no
-events (a pure delay) has a signature of just its duration.
+Amplitudes, phases, frequencies, shapes, delays within the block, labels and
+triggers are not part of the signature. A block with no events (a pure delay)
+has a signature of just its duration.
 
-Durations are converted to integer ticks (`round(duration / block_raster)`)
-so comparisons are exact.
+Durations are converted to integer ticks (`round(duration / block_raster)`,
+with the block raster from the file's definitions) so comparisons are exact.
 
 Signatures are interned: each distinct signature gets a small integer token,
 and the sequence becomes a token string `s` of length `n` (number of blocks).
@@ -207,7 +204,7 @@ Stack mode shows exactly one iteration of every loop at a time.
 
 ```rust
 #[wasm_bindgen]
-pub struct Viewer { /* both pulseq-rs models + loop tree */ }
+pub struct Viewer { /* interpreted sequence + loop tree */ }
 
 #[wasm_bindgen]
 impl Viewer {
