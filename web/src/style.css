@@ -10,6 +10,7 @@
   --loop-tint: rgba(42, 120, 214, 0.05);
   --loop-tint-focus: rgba(42, 120, 214, 0.12);
   --error: #c4302b;
+  --collapsed: rgba(120, 118, 110, 0.12);
   --ch-rf: #2a78d6;
   --ch-phase: #4a3aa7;
   --ch-gx: #eb6834;
@@ -33,6 +34,7 @@
     --loop-tint: rgba(57, 135, 229, 0.07);
     --loop-tint-focus: rgba(57, 135, 229, 0.16);
     --error: #e66767;
+    --collapsed: rgba(200, 198, 190, 0.1);
     --ch-rf: #3987e5;
     --ch-phase: #9085e9;
     --ch-gx: #d95926;
@@ -95,6 +97,18 @@ h2 {
   background: var(--panel);
   font-size: 0.9rem;
   cursor: pointer;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.toggle input {
+  accent-color: var(--accent);
 }
 
 select.button {

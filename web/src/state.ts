@@ -20,11 +20,11 @@ export interface Loop {
   iterDur: number;
 }
 
-export type Change = "iters" | "view" | "focus" | "hover";
+export type Change = "iters" | "view" | "focus" | "hover" | "layout";
 
 /** Everything the plot and the controls show, plus change notification. */
 export class State {
-  readonly loops: Loop[];
+  loops: Loop[];
   readonly maxDepth: number;
   /** Current iteration of every loop (stack mode). */
   readonly iters: Uint32Array;
@@ -42,6 +42,14 @@ export class State {
     this.loops = parseLoops(viewer.loops());
     this.maxDepth = this.loops.reduce((m, l) => Math.max(m, l.depth), -1);
     this.iters = new Uint32Array(this.loops.length);
+    this.resetView();
+  }
+
+  /** Collapse or expand delay blocks; loops keep their iterations. */
+  setCollapseDelays(collapse: boolean): void {
+    this.viewer.set_collapse_delays(collapse);
+    this.loops = parseLoops(this.viewer.loops());
+    this.emit("layout");
     this.resetView();
   }
 

@@ -1,7 +1,10 @@
 use seq_core::model::{Analysis, NONE};
 
 fn load(name: &str) -> Analysis {
-    let path = format!("{}/../../web/public/examples/{name}", env!("CARGO_MANIFEST_DIR"));
+    let path = format!(
+        "{}/../../web/public/examples/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
     let source = std::fs::read_to_string(path).unwrap();
     Analysis::load(&source).unwrap()
 }
@@ -68,6 +71,29 @@ fn radial() {
 fn flash_repeated_nests() {
     let a = load("flash_repeated.seq");
     check_cover(&a);
-    let loops: Vec<_> = a.loops.iter().map(|l| (l.depth, l.count, l.blocks_per_iter)).collect();
+    let loops: Vec<_> = a
+        .loops
+        .iter()
+        .map(|l| (l.depth, l.count, l.blocks_per_iter))
+        .collect();
     assert_eq!(loops, [(0, 200, 481), (1, 96, 5)]);
+}
+
+#[test]
+fn collapse_delays() {
+    let mut a = load("flash_je.seq");
+    let full = a.display_duration;
+    a.set_collapse_delays(true);
+    check_cover(&a);
+    // The 5 s initial delay shrinks to the median event block duration.
+    assert!(a.display_duration < 0.01, "{}", a.display_duration);
+    assert!(a.leaves[0].collapsed);
+    let iters = vec![0; a.loops.len()];
+    let (b, real, _) = a.hover(&iters, a.leaves[0].disp_dur * 0.5).unwrap();
+    assert_eq!(b, 0);
+    assert!((real - 2.5).abs() < 1e-9, "{real}");
+    // Same loops, and switching back restores the layout.
+    assert_eq!(a.loops.len(), 1);
+    a.set_collapse_delays(false);
+    assert_eq!(a.display_duration, full);
 }

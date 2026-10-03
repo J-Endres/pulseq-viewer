@@ -16,6 +16,10 @@
       <select id="example" class="button" aria-label="Load an example sequence">
         <option value="" selected>Examples…</option>
       </select>
+      <label class="toggle">
+        <input id="collapse" type="checkbox" checked />
+        Collapse delays
+      </label>
       <span id="file-name" class="muted"></span>
     </header>
     <main>
@@ -34,7 +38,8 @@
         <div id="loops"><p class="muted">No sequence loaded.</p></div>
         <p class="help muted">
           Scroll over a loop bracket to step through iterations. Click a bracket, then use the arrow keys.
-          Scroll to zoom, drag to pan, double-click to reset.
+          Scroll or pinch to zoom, drag to pan, double-click or double-tap to reset. Collapsed delays are shaded and
+          labelled with their real duration.
         </p>
       </aside>
     </main>

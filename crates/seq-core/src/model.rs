@@ -93,6 +93,8 @@ pub struct Leaf {
     pub offset: u64,
     pub disp_start: f64,
     pub disp_dur: f64,
+    /// Drawn shorter than its real duration (a collapsed delay block).
+    pub collapsed: bool,
 }
 
 pub struct Analysis {
@@ -108,6 +110,13 @@ pub struct Analysis {
     pub channel_max: [f64; CHANNELS],
     /// Per block and channel: (min, max) in display units, NaN if absent.
     summary: Vec<[[f32; 2]; CHANNELS]>,
+    grammar: Grammar,
+    /// Compressed top-level token string.
+    top: Vec<u32>,
+    /// Display duration of collapsed delay blocks: the median duration of
+    /// blocks with events.
+    delay_cap: f64,
+    collapse_delays: bool,
 }
 
 impl Analysis {
@@ -146,14 +155,16 @@ impl Analysis {
         let mut grammar = Grammar::new(&leaf_rf);
         let top = grammar.compress(tokens);
 
-        let mut layout = Layout {
-            grammar: &grammar,
-            blocks: &blocks,
-            loops: Vec::new(),
-            leaves: Vec::with_capacity(top.len()),
-        };
-        let (_, display_duration) = layout.sequence(&top, NONE, 0, 0, 0, 0.0);
-        let Layout { loops, leaves, .. } = layout;
+        let mut event_durations: Vec<f64> = blocks
+            .iter()
+            .filter(|b| !is_delay(b))
+            .map(|b| b.duration)
+            .collect();
+        event_durations.sort_by(f64::total_cmp);
+        let delay_cap = event_durations
+            .get(event_durations.len() / 2)
+            .copied()
+            .unwrap_or(f64::INFINITY);
 
         let mut stats = ShapeStats::default();
         let summary: Vec<_> = blocks.iter().map(|b| stats.block(b)).collect();
@@ -171,17 +182,45 @@ impl Analysis {
         channel_max[RF_PHASE] = std::f64::consts::PI;
         channel_max[ADC] = 1.0;
 
-        Ok(Self {
+        let mut a = Self {
             name: seq.name,
             warnings,
             blocks,
             block_start,
-            loops,
-            leaves,
-            display_duration,
+            loops: Vec::new(),
+            leaves: Vec::new(),
+            display_duration: 0.0,
             channel_max,
             summary,
-        })
+            grammar,
+            top,
+            delay_cap,
+            collapse_delays: false,
+        };
+        a.layout();
+        Ok(a)
+    }
+
+    /// Draw delay blocks (no events) at most `delay_cap` wide.
+    pub fn set_collapse_delays(&mut self, collapse: bool) {
+        if collapse != self.collapse_delays {
+            self.collapse_delays = collapse;
+            self.layout();
+        }
+    }
+
+    fn layout(&mut self) {
+        let mut layout = Layout {
+            grammar: &self.grammar,
+            blocks: &self.blocks,
+            delay_cap: self.collapse_delays.then_some(self.delay_cap),
+            loops: Vec::new(),
+            leaves: Vec::with_capacity(self.top.len()),
+        };
+        let (_, display_duration) = layout.sequence(&self.top, NONE, 0, 0, 0, 0.0);
+        self.loops = layout.loops;
+        self.leaves = layout.leaves;
+        self.display_duration = display_duration;
     }
 
     /// Start block of the current iteration of every loop, for the given
@@ -292,18 +331,42 @@ impl Analysis {
             .partition_point(|l| l.disp_start + l.disp_dur <= t);
         let leaf = self.leaves.get(i).filter(|l| l.disp_start <= t)?;
         let b = self.resolve(&self.iteration_starts(iters), leaf);
-        Some((
-            b,
-            self.block_start[b] + (t - leaf.disp_start),
-            leaf.disp_start,
-        ))
+        let real_dur = self.blocks[b].duration;
+        let into = (t - leaf.disp_start) * real_dur / leaf.disp_dur;
+        Some((b, self.block_start[b] + into, leaf.disp_start))
     }
+
+    /// `(display start, display end, real duration)` of collapsed delay
+    /// blocks overlapping `[t0, t1]`, at most `max` of them.
+    pub fn collapsed(&self, iters: &[u32], t0: f64, t1: f64, max: usize) -> Vec<[f64; 3]> {
+        let starts = self.iteration_starts(iters);
+        self.visible(t0, t1)
+            .iter()
+            .filter(|l| l.collapsed)
+            .take(max)
+            .map(|l| {
+                let b = self.resolve(&starts, l);
+                [
+                    l.disp_start,
+                    l.disp_start + l.disp_dur,
+                    self.blocks[b].duration,
+                ]
+            })
+            .collect()
+    }
+}
+
+/// A block without RF, gradient or ADC events.
+fn is_delay(b: &int::Block) -> bool {
+    b.rf.is_none() && b.gx.is_none() && b.gy.is_none() && b.gz.is_none() && b.adc.is_none()
 }
 
 /// Builds `loops` and `leaves` from the compressed token string.
 struct Layout<'a> {
     grammar: &'a Grammar,
     blocks: &'a [int::Block],
+    /// Maximum display duration of delay blocks, if they are collapsed.
+    delay_cap: Option<f64>,
     loops: Vec<LoopNode>,
     leaves: Vec<Leaf>,
 }
@@ -343,12 +406,19 @@ impl Layout<'_> {
     ) -> (u64, f64) {
         match self.grammar.def(tok) {
             TokenDef::Leaf(_) => {
-                let disp_dur = self.blocks[abs as usize].duration;
+                // Every iteration of the enclosing loops has the same
+                // signature here, so iteration 0 stands for all of them.
+                let block = &self.blocks[abs as usize];
+                let disp_dur = match self.delay_cap {
+                    Some(cap) if is_delay(block) => block.duration.min(cap),
+                    _ => block.duration,
+                };
                 self.leaves.push(Leaf {
                     parent,
                     offset,
                     disp_start: t,
                     disp_dur,
+                    collapsed: disp_dur < block.duration,
                 });
                 (1, disp_dur)
             }

@@ -149,6 +149,7 @@ export class Plot {
     }
     ctx.restore();
 
+    this.drawCollapsed(color);
     this.drawBrackets(color);
 
     // Waveforms
@@ -183,6 +184,43 @@ export class Plot {
         ctx.setLineDash([]);
       }
     }
+  }
+
+  /** Collapsed delay blocks: a tinted band with dashed edges and the real duration. */
+  private drawCollapsed(color: (n: string) => string): void {
+    const { ctx, state } = this;
+    const a = this.area;
+    const d = state.viewer.collapsed(state.iters, state.t0, state.t1, 5000);
+    if (d.length === 0) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(a.x, a.y, a.w, a.h);
+    ctx.clip();
+    ctx.font = `11px ${getComputedStyle(this.canvas).fontFamily}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.setLineDash([2, 3]);
+    ctx.lineWidth = 1;
+    for (let i = 0; i < d.length; i += 3) {
+      const x0 = this.xAt(d[i]!);
+      const x1 = this.xAt(d[i + 1]!);
+      ctx.fillStyle = color("--collapsed");
+      ctx.fillRect(x0, a.y, x1 - x0, a.h);
+      if (x1 - x0 < 4) continue;
+      ctx.strokeStyle = color("--bracket");
+      ctx.beginPath();
+      for (const x of [x0, x1]) {
+        ctx.moveTo(Math.round(x) + 0.5, a.y);
+        ctx.lineTo(Math.round(x) + 0.5, a.y + a.h);
+      }
+      ctx.stroke();
+      const label = formatSeconds(d[i + 2]!);
+      if (ctx.measureText(label).width + 6 <= x1 - x0) {
+        ctx.fillStyle = color("--text-muted");
+        ctx.fillText(label, (x0 + x1) / 2, a.y + a.h - 2);
+      }
+    }
+    ctx.restore();
   }
 
   /** Value → CSS y within a row. */
@@ -362,6 +400,12 @@ export class Plot {
     ctx.fillText("ms", GUTTER - 6, y);
     ctx.textBaseline = "middle";
   }
+}
+
+function formatSeconds(s: number): string {
+  if (s >= 1) return `${s.toPrecision(3)} s`;
+  if (s >= 1e-3) return `${(s * 1e3).toPrecision(3)} ms`;
+  return `${(s * 1e6).toPrecision(3)} µs`;
 }
 
 function niceStep(raw: number): number {

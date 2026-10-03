@@ -176,6 +176,22 @@ over the pre-ordered list; a leaf's block is `start(parent) + offset`. Real
 time at a display time is the real start of the resolved block plus the offset
 into it.
 
+### Collapsed delays
+
+A *delay block* is a block without RF, gradient or ADC events. With
+**Collapse delays** on (a header toggle, on by default and remembered per
+browser), each delay block is laid out with a display duration of at most the
+median duration of the blocks that have events; shorter delays keep their
+real duration. Loop detection is unaffected (signatures still use the real
+duration), and since all iterations of a loop share their signatures, a
+collapsed delay inside a loop has the same width in every iteration.
+Toggling re-runs the layout in wasm and keeps the current iterations.
+
+Inside a collapsed block, display time maps linearly onto the block's real
+duration, so the hover readout still shows real time. The renderer shades
+collapsed blocks across all rows, marks their edges with dashed lines and
+labels them with their real duration when it fits.
+
 ## Stack mode
 
 Stack mode shows exactly one iteration of every loop at a time.
@@ -232,7 +248,10 @@ Stack mode shows exactly one iteration of every loop at a time.
   by `prefers-color-scheme`. Loop extents get a light background tint in all
   rows.
 - **Navigation**: wheel zooms around the cursor, horizontal wheel and drag
-  pan, double-click resets to the full timeline. The footer shows the block
+  pan, double-click resets to the full timeline. On touch screens a
+  two-finger pinch zooms around the fingers' midpoint (keeping the time under
+  it fixed, so moving both fingers also pans), one finger pans, a tap focuses
+  a bracket and a double tap resets. The footer shows the block
   number and real time under the pointer, and the sequence name, block count,
   real duration, loop count and interpreter warnings.
 - Redraws are scheduled with `requestAnimationFrame` and coalesced.
@@ -268,6 +287,13 @@ impl Viewer {
 
     /// Display times of ADC samples in the window; empty if more than `max`.
     pub fn adc_samples(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64>;
+
+    /// Collapse delay blocks (re-runs the layout).
+    pub fn set_collapse_delays(&mut self, collapse: bool);
+
+    /// Collapsed delays in the window, 3 values each: display start,
+    /// display end, real duration.
+    pub fn collapsed(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64>;
 
     /// [block index, real time, block display start] under display time t.
     pub fn hover(&self, iters: &[u32], t: f64) -> Vec<f64>;
