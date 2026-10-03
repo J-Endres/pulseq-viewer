@@ -4,12 +4,40 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pulseq Viewer</title>
+    <link rel="icon" href="data:," />
   </head>
   <body>
     <header>
       <h1>Pulseq Viewer</h1>
+      <label class="button">
+        Open .seq file
+        <input id="file" type="file" accept=".seq" hidden />
+      </label>
+      <select id="example" class="button" aria-label="Load an example sequence">
+        <option value="" selected>Examples…</option>
+      </select>
+      <span id="file-name" class="muted"></span>
     </header>
-    <main id="app"></main>
+    <main>
+      <section class="plot-pane">
+        <div id="plot">
+          <canvas id="canvas" hidden></canvas>
+          <p id="message" hidden></p>
+        </div>
+        <footer>
+          <span id="readout"></span>
+          <span id="info" class="muted"></span>
+        </footer>
+      </section>
+      <aside>
+        <h2>Loops</h2>
+        <div id="loops"><p class="muted">No sequence loaded.</p></div>
+        <p class="help muted">
+          Scroll over a loop bracket to step through iterations. Click a bracket, then use the arrow keys.
+          Scroll to zoom, drag to pan, double-click to reset.
+        </p>
+      </aside>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
