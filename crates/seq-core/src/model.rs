@@ -334,14 +334,57 @@ impl Analysis {
     /// Block index, real time and display start of the block under display
     /// time `t`, or nothing outside the timeline.
     pub fn hover(&self, iters: &[u32], t: f64) -> Option<(usize, f64, f64)> {
-        let i = self
-            .leaves
-            .partition_point(|l| l.disp_start + l.disp_dur <= t);
-        let leaf = self.leaves.get(i).filter(|l| l.disp_start <= t)?;
+        let leaf = self.leaf_at(t)?;
         let b = self.resolve(&self.iteration_starts(iters), leaf);
         let real_dur = self.blocks[b].duration;
         let into = (t - leaf.disp_start) * real_dur / leaf.disp_dur;
         Some((b, self.block_start[b] + into, leaf.disp_start))
+    }
+
+    fn leaf_at(&self, t: f64) -> Option<&Leaf> {
+        let i = self
+            .leaves
+            .partition_point(|l| l.disp_start + l.disp_dur <= t);
+        self.leaves.get(i).filter(|l| l.disp_start <= t)
+    }
+
+    /// Blocks under display time `t` over all iterations of the stacked
+    /// loops (`stacked[loop] != 0`) that enclose it; other loops stay at
+    /// `iters`. Sorted and unique; empty outside the timeline.
+    pub fn hover_blocks(&self, iters: &[u32], stacked: &[u8], t: f64) -> Vec<usize> {
+        let Some(leaf) = self.leaf_at(t) else {
+            return Vec::new();
+        };
+        let mut chain = Vec::new();
+        let mut p = leaf.parent;
+        while p != NONE {
+            if stacked.get(p as usize).is_some_and(|&s| s != 0) {
+                chain.push(p as usize);
+            }
+            p = self.loops[p as usize].parent;
+        }
+        let mut it: Vec<u32> = (0..self.loops.len())
+            .map(|i| iters.get(i).copied().unwrap_or(0))
+            .collect();
+        for &l in &chain {
+            it[l] = 0;
+        }
+        let mut out = Vec::new();
+        // Odometer over the iterations of the enclosing stacked loops
+        'combos: loop {
+            out.push(self.resolve(&self.iteration_starts(&it), leaf));
+            for &l in &chain {
+                it[l] += 1;
+                if it[l] < self.loops[l].count {
+                    continue 'combos;
+                }
+                it[l] = 0;
+            }
+            break;
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// `(display start, label event)` of blocks with label operations in

@@ -29,10 +29,21 @@ const labelsList = $("#labels");
 
 const wasmReady = init();
 
-let current: { state: State; plot: Plot; dispose: () => void } | null = null;
+interface Shown {
+  state: State;
+  plot: Plot;
+  /** Redraw theme-dependent colours outside the canvas. */
+  recolor: () => void;
+  dispose: () => void;
+}
+
+let current: Shown | null = null;
 
 // The canvas reads its colours from CSS variables at draw time.
-initTheme($<HTMLSelectElement>("#theme"), () => current?.plot.request());
+initTheme($<HTMLSelectElement>("#theme"), () => {
+  current?.plot.request();
+  current?.recolor();
+});
 
 function showMessage(text: string, kind: "hint" | "error" | "busy"): void {
   message.textContent = text;
@@ -70,12 +81,12 @@ function openFile(file: File): void {
   void open(file.name, () => file.text());
 }
 
-function show(viewer: Viewer): { state: State; plot: Plot; dispose: () => void } {
+function show(viewer: Viewer): Shown {
   viewer.set_collapse_delays(collapseInput.checked);
   const state = new State(viewer);
   const plot = new Plot(canvas, state);
   canvas.hidden = false;
-  buildLoopPanel(panel, state);
+  const recolor = buildLoopPanel(panel, state);
 
   const warnings = viewer.warnings();
   info.replaceChildren();
@@ -111,6 +122,7 @@ function show(viewer: Viewer): { state: State; plot: Plot; dispose: () => void }
   return {
     state,
     plot,
+    recolor,
     dispose: () => {
       ac.abort();
       resize.disconnect();
@@ -120,10 +132,18 @@ function show(viewer: Viewer): { state: State; plot: Plot; dispose: () => void }
 }
 
 function updateReadout(state: State): void {
-  const h = state.hover === null ? null : state.viewer.hover(state.iters, state.hover);
-  if (!h || h.length === 0) {
+  const t = state.hover;
+  const h = t === null ? null : state.viewer.hover(state.iters, t);
+  if (t === null || !h || h.length === 0) {
     readout.textContent = "";
     showLabels(state, null);
+    return;
+  }
+  // Under a stacked loop, the pointer covers one block per iteration.
+  const blocks = state.anyStacked ? state.viewer.hover_blocks(state.iters, state.stacked, t) : null;
+  if (blocks && blocks.length > 1) {
+    readout.textContent = `${blocks.length} blocks overlaid (blocks ${blocks[0]! + 1} … ${blocks[blocks.length - 1]! + 1})`;
+    showStackedLabels(state, t, blocks.length);
     return;
   }
   readout.textContent = `block ${h[0]! + 1} · t = ${(h[1]! * 1e3).toFixed(3)} ms`;
@@ -140,19 +160,56 @@ function showLabels(state: State, block: number | null): void {
   const values = state.viewer.labels_at(block);
   const before = block > 0 ? state.viewer.labels_at(block - 1) : new Int32Array(names.length);
   labelsTitle.textContent = `Labels · block ${block + 1}`;
+  // Highlight values this block changed
+  fillLabels(names.map((name, i) => [name, String(values[i]), values[i] !== before[i]]));
+}
+
+/** Label values over all overlaid iterations at display time `t`. */
+function showStackedLabels(state: State, t: number, blocks: number): void {
+  const names = state.viewer.label_names();
+  const show = names.length > 0;
+  loopsSection.hidden = show;
+  labelsSection.hidden = !show;
+  if (!show) return;
+  const flat = state.viewer.hover_labels(state.iters, state.stacked, t);
+  const rows: [string, string, boolean][] = [];
+  let k = 0;
+  for (const name of names) {
+    const n = flat[k++]!;
+    const values = Array.from(flat.subarray(k, k + n));
+    k += n;
+    // Labels that differ between iterations are highlighted
+    rows.push([name, formatValues(values), n > 1]);
+  }
+  labelsTitle.textContent = `Labels · ${blocks} blocks`;
+  fillLabels(rows);
+}
+
+function fillLabels(rows: [string, string, boolean][]): void {
   labelsList.replaceChildren(
-    ...names.flatMap((name, i) => {
+    ...rows.flatMap(([name, value, highlight]) => {
       const dt = document.createElement("dt");
       const dd = document.createElement("dd");
       dt.textContent = name;
-      dd.textContent = String(values[i]);
-      // Highlight values this block changed
-      const changed = values[i] !== before[i];
-      dt.classList.toggle("changed", changed);
-      dd.classList.toggle("changed", changed);
+      dd.textContent = value;
+      dt.classList.toggle("changed", highlight);
+      dd.classList.toggle("changed", highlight);
       return [dt, dd];
     }),
   );
+}
+
+/** Sorted unique values as a list, or as ranges when there are many. */
+export function formatValues(v: number[]): string {
+  if (v.length <= 6) return v.join(", ");
+  const runs: [number, number][] = [];
+  for (const x of v) {
+    const last = runs[runs.length - 1];
+    if (last && x === last[1] + 1) last[1] = x;
+    else runs.push([x, x]);
+  }
+  if (runs.length <= 4) return runs.map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`)).join(", ");
+  return `${v[0]}–${v[v.length - 1]} (${v.length} values)`;
 }
 
 function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void {
@@ -178,7 +235,7 @@ function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void 
         const steps = Math.trunc(wheelAcc / 40);
         if (steps !== 0) {
           wheelAcc -= steps * 40;
-          state.stepIter(loop, steps);
+          if (!state.stacked[loop]) state.stepIter(loop, steps);
         }
         return;
       }
@@ -286,6 +343,7 @@ function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void 
       if (id < 0) return;
       const loop = state.loops[id]!;
       const step: Record<string, number> = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 };
+      if (state.stacked[id] && (e.key in step || e.key === "Home" || e.key === "End")) return;
       if (e.key in step) state.stepIter(id, step[e.key]!);
       else if (e.key === "Home") state.setIter(id, 0);
       else if (e.key === "End") state.setIter(id, loop.count - 1);

@@ -4,7 +4,7 @@ A static web page, hosted on GitHub Pages, that opens a Pulseq `.seq` file and
 plots it. Its distinguishing feature is that loops unrolled in the file (phase
 encoding, slices, averages, …) are detected and shown rolled up: the timeline
 runs left to right, and each detected loop occupies the width of a single
-iteration, with controls to step through its iterations.
+iteration, with controls to step through its iterations or overlay all of them.
 
 Everything runs in the browser. The file is read locally and never uploaded.
 
@@ -22,7 +22,7 @@ Everything runs in the browser. The file is read locally and never uploaded.
             │                      │ typed arrays      │
             │                      ▼                   │
             │   timeline model → canvas renderer       │
-            │   loop controls (stack mode)             │
+            │   loop controls (single / stacked)       │
             └──────────────────────────────────────────┘
 ```
 
@@ -50,6 +50,7 @@ web/                    Vite app
   src/controls.ts       loop panel
   src/examples.ts       built-in example list
   src/theme.ts          colour theme menu
+  src/colormap.ts       viridis colour map for stacked iterations
   public/examples/      example .seq files, served with the site
 scripts/                generator for the long example sequence
   src/wasm/             wasm-bindgen output (generated, not committed)
@@ -213,17 +214,21 @@ The values at any block come from a binary search over those blocks.
   the current iterations, with its text where there is room before the next
   tick (truncated with "…").
 - **Hover panel**: while the pointer is over the plot, the side panel shows
-  the label values after the hovered block instead of the loop controls,
+  the label values after the hovered block (or all their values under stacked
+  loops, see below) instead of the loop controls,
   with values the block changed highlighted; it switches back when the
   pointer leaves the plot. Sequences without labels keep the loop panel.
 
-## Stack mode
+## Iterations: single and stacked
 
-Stack mode shows exactly one iteration of every loop at a time.
+Every loop is shown in one of two modes, chosen per loop:
 
-- **State**: one iteration index per loop node, starting at 0. A loop nested
-  in another loop's body has one shared index, independent of which outer
-  iteration is shown.
+- **Single** (default): one iteration, selected with the loop's slider.
+- **Stacked**: all iterations overlaid, colour-coded by iteration index.
+
+- **State**: per loop an iteration index (starting at 0) and a stacked
+  flag. A loop nested in another loop's body has one shared index,
+  independent of which outer iteration is shown.
 - **Controls**:
   - Above the plot, every loop has a bracket spanning its segment, one row per
     nesting depth, labelled with its name and current iteration
@@ -232,13 +237,51 @@ Stack mode shows exactly one iteration of every loop at a time.
   - Scrolling the mouse wheel over a bracket steps that loop's iteration;
     clicking the bracket focuses it, after which arrow keys step it (Home and
     End jump to the first and last iteration, Escape clears the focus).
+    Stepping does nothing on a stacked loop.
   - A side panel lists all loops, nested by depth, each with its count,
-    blocks per iteration, real duration of one iteration, and a slider and
-    number field for its iteration. The focused loop is highlighted in both
-    the panel and the plot.
+    blocks per iteration, real duration of one iteration, a **Stack** toggle,
+    and a slider and number field for its iteration. While stacked, the
+    slider is replaced by a colour bar from 1 to the loop's count. The
+    focused loop is highlighted in both the panel and the plot.
+  - A stacked loop's bracket is drawn with the colour scale and labelled
+    `all 96`, or `24 of 96` when not all iterations are drawn (below).
 - **Fixed y-scales**: each channel's y-range is the maximum over the whole
-  sequence, so stepping through iterations shows amplitude changes instead of
-  rescaling.
+  sequence, so stepping or overlaying iterations shows amplitude changes
+  instead of rescaling.
+
+### Overlay
+
+Every draw first splits the visible window into intervals, each owned by the
+innermost stacked loop covering it, or by no stacked loop.
+
+- Outside stacked intervals, the current iterations are drawn once in the
+  channel colours, as in single mode.
+- Inside them, the renderer draws one waveform set per combination of the
+  iterations of the visible stacked loops, each from its own `waveforms`
+  call over the span of the stacked intervals. In each interval, a
+  combination is drawn in the colour of the owning loop's iteration (viridis,
+  restricted per theme to the part that stays visible on its background) and
+  clipped to that interval. ADC phase is dashed there, since the channel
+  colours no longer tell RF from ADC.
+- At most 256 combinations are drawn: the loop with the most iterations to
+  draw is halved (evenly spread iterations, first and last included) until
+  the product fits.
+- ADC windows do not change between iterations and are drawn once.
+- In the label row, ticks inside stacked intervals have no text, because
+  the text would describe a single iteration.
+- Runs of identical flat columns are drawn as one line segment, which keeps
+  the overlay of ~100 iterations at about 30 ms per frame.
+
+### Hover with stacked loops
+
+Under a stacked loop, the pointer covers one block per iteration.
+`hover_blocks` returns the blocks under the pointer for every combination of
+the iterations of the stacked loops enclosing it, with all of them, not just
+the drawn ones. The footer then shows how many blocks are overlaid and their
+range, and the label panel lists each label's unique values over those
+blocks: up to six values as a list, otherwise as ranges of consecutive values
+(`0–95`) when there are at most four ranges, otherwise as `min–max (n
+values)`. Labels with more than one value are highlighted.
 
 ## Rendering
 
@@ -338,6 +381,12 @@ impl Viewer {
     pub fn labels_at(&self, block: u32) -> Vec<i32>;
     pub fn label_marks(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64>;
     pub fn label_text(&self, event: u32) -> String;
+
+    /// Blocks under t over all iterations of the stacked loops enclosing it
+    /// (stacked[loop] != 0), and the unique values of every label over them
+    /// (per label: count, then sorted values).
+    pub fn hover_blocks(&self, iters: &[u32], stacked: &[u8], t: f64) -> Vec<u32>;
+    pub fn hover_labels(&self, iters: &[u32], stacked: &[u8], t: f64) -> Vec<i32>;
 
     /// [block index, real time, block display start] under display time t.
     pub fn hover(&self, iters: &[u32], t: f64) -> Vec<f64>;

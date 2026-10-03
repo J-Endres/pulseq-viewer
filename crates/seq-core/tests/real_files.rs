@@ -156,3 +156,33 @@ fn labels_match_interpreter() {
     assert_eq!(text(0), ["LIN=48 AVG=0 PAR=0 REF=0 IMA=0", "ECO=0 REV=0"]);
     assert_eq!(text(1), ["LIN=47 AVG=0 PAR=0 REF=0 IMA=0", "ECO=0 REV=0"]);
 }
+
+#[test]
+fn hover_over_stacked_loops() {
+    let a = load("flash_repeated.seq");
+    let (outer, inner) = (&a.loops[0], &a.loops[1]);
+    // Middle of the readout block of the inner loop body
+    let leaf = a
+        .leaves
+        .iter()
+        .find(|l| l.parent == 1 && a.blocks[(inner.first_block + l.offset) as usize].adc.is_some())
+        .unwrap();
+    let t = leaf.disp_start + leaf.disp_dur / 2.0;
+    let iters = [0, 0];
+    assert_eq!(a.hover_blocks(&iters, &[0, 0], t).len(), 1);
+    assert_eq!(a.hover_blocks(&iters, &[0, 1], t).len(), inner.count as usize);
+    assert_eq!(a.hover_blocks(&iters, &[1, 0], t).len(), outer.count as usize);
+    assert_eq!(
+        a.hover_blocks(&iters, &[1, 1], t).len(),
+        (outer.count * inner.count) as usize
+    );
+    // Stacking the line loop covers every LIN value once.
+    let lin = a.labels.names.iter().position(|n| n == "LIN").unwrap();
+    let mut lins: Vec<i32> = a
+        .hover_blocks(&iters, &[0, 1], t)
+        .iter()
+        .map(|&b| a.labels.at(b)[lin])
+        .collect();
+    lins.sort();
+    assert_eq!(lins, (0..96).collect::<Vec<_>>());
+}

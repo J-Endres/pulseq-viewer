@@ -137,6 +137,32 @@ impl Viewer {
         self.a.labels.text(event as usize).to_string()
     }
 
+    /// Blocks under display time `t` over all iterations of the stacked loops
+    /// (`stacked[loop] != 0`) enclosing it, sorted and unique.
+    pub fn hover_blocks(&self, iters: &[u32], stacked: &[u8], t: f64) -> Vec<u32> {
+        self.a
+            .hover_blocks(iters, stacked, t)
+            .into_iter()
+            .map(|b| b as u32)
+            .collect()
+    }
+
+    /// Unique values of every label in `label_names` over the blocks of
+    /// `hover_blocks`: per label, the count followed by the sorted values.
+    pub fn hover_labels(&self, iters: &[u32], stacked: &[u8], t: f64) -> Vec<i32> {
+        let blocks = self.a.hover_blocks(iters, stacked, t);
+        let values: Vec<Vec<i32>> = blocks.iter().map(|&b| self.a.labels.at(b)).collect();
+        let mut out = Vec::new();
+        for i in 0..self.a.labels.names.len() {
+            let mut v: Vec<i32> = values.iter().map(|vals| vals[i]).collect();
+            v.sort_unstable();
+            v.dedup();
+            out.push(v.len() as i32);
+            out.extend(v);
+        }
+        out
+    }
+
     /// `[block index, real time [s], block display start [s]]` under display
     /// time `t`, or empty outside the timeline.
     pub fn hover(&self, iters: &[u32], t: f64) -> Vec<f64> {
