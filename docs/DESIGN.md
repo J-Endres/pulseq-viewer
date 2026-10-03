@@ -321,12 +321,48 @@ values)`. Labels with more than one value are highlighted.
 - **Colours and themes**: one fixed hue per channel (RF, RF phase, Gx, Gy,
   Gz, ADC and ADC phase), all defined as CSS variables per theme and read by
   the canvas at draw time. A header menu offers System (default), Light,
-  Dark, Solarized Light, Solarized Dark, Nord and Dracula; each theme takes
+  Dark, Solarized Light, Solarized Dark, Nord, Dracula and Paper; each theme takes
   its channel colours from its own palette. `data-theme` on `<html>` always
   holds a concrete theme: System resolves to Light or Dark and follows OS
   changes. The choice is remembered per browser, and an inline script in
   `index.html` applies it before first paint. Loop extents get a light
   background tint in all rows.
+- **Paper style**: the Paper theme sets `--plot-style: paper`, which
+  switches the canvas to publication-style axes in the manner of matplotlib
+  and MATLAB figures in MRI papers:
+  - white background, black text, Arial/Helvetica (`--plot-font`), and
+    matplotlib's tab10 channel colours (ADC grey); no loop tints;
+  - every row is a framed axes with a rotated y label including the unit
+    (`Gx (kHz/m)`), outward ticks at round values (at least three per row;
+    the phase row at −π, 0, π) with true minus signs, and the RF/ADC legend
+    as a box in the top-right corner of the axes;
+  - x ticks on the bottom edge of every row, tick labels under the last one
+    and a `Time (ms)` axis title;
+  - no label row (an interactive aid; the hover panel still shows labels);
+  - axis breaks (a gap with two slashes in each frame) wherever real time
+    jumps, with a collapsed delay's real duration beside its break instead
+    of a shaded band;
+  - loop brackets without loop names: `iteration 5/64`, or for stacked
+    loops `64 iterations` (`32 of 64 iterations` when capped).
+- **Export**: **Save PNG** redraws the plot at 3× its on-screen size without
+  the hover line and downloads it as `<sequence name>.png`, in whatever
+  theme is active.
+- **Time axis**: ticks and labels are real sequence time in ms, placed
+  through `time_segments`, a piecewise display → real mapping from wasm for
+  the current iterations, with stacked loops at their first iteration.
+  - Real time advances at the display rate within a piece. A collapsed delay
+    is treated as cut at its centre: its first half continues the time
+    before it, its second half leads into the time after it, so ticks run
+    on through both halves.
+  - Consecutive pieces whose real times continue each other are merged, so
+    every remaining boundary is a jump in real time: the centre of a
+    collapsed delay, the end of a stacked loop (it jumps over the remaining
+    iterations), or a loop shown at a later iteration. Each jump gets a
+    break mark: two slashes between the tick marks on screen, a gap with two
+    slashes in every frame in paper style.
+  - Ticks sit at round real times; a piece followed by a jump leaves its end
+    tick to the next piece, and labels that would overlap the previous one
+    are dropped.
 - **Navigation**: wheel zooms around the cursor, horizontal wheel and drag
   pan, double-click resets to the full timeline. On touch screens a
   two-finger pinch zooms around the fingers' midpoint (keeping the time under
@@ -367,6 +403,10 @@ impl Viewer {
 
     /// Display times of ADC samples in the window; empty if more than `max`.
     pub fn adc_samples(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64>;
+
+    /// Display → real time pieces in the window, 3 values each: display
+    /// start, display end, real start; boundaries are real-time jumps.
+    pub fn time_segments(&self, iters: &[u32], t0: f64, t1: f64) -> Vec<f64>;
 
     /// Collapse delay blocks (re-runs the layout).
     pub fn set_collapse_delays(&mut self, collapse: bool);

@@ -112,6 +112,17 @@ impl Viewer {
             .collect()
     }
 
+    /// Display → real time pieces in `[t0, t1]`, 3 values each: display
+    /// start, display end, real start `[s]`. Every boundary between pieces is
+    /// a jump in real time.
+    pub fn time_segments(&self, iters: &[u32], t0: f64, t1: f64) -> Vec<f64> {
+        self.a
+            .time_segments(iters, t0, t1)
+            .into_iter()
+            .flat_map(|(d0, d1, r)| [d0, d1, r])
+            .collect()
+    }
+
     /// Labels the sequence sets or increments, in display order.
     pub fn label_names(&self) -> Vec<String> {
         self.a.labels.names.clone()

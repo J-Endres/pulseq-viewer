@@ -16,6 +16,7 @@ const fileInput = $<HTMLInputElement>("#file");
 const fileName = $("#file-name");
 const exampleSelect = $<HTMLSelectElement>("#example");
 const collapseInput = $<HTMLInputElement>("#collapse");
+const saveButton = $<HTMLButtonElement>("#save");
 const plotHost = $("#plot");
 const canvas = $<HTMLCanvasElement>("#canvas");
 const message = $("#message");
@@ -66,6 +67,7 @@ async function open(name: string, readText: () => Promise<string>): Promise<void
     const viewer = Viewer.load(text);
     current?.dispose();
     current = show(viewer);
+    saveButton.disabled = false;
     if (import.meta.env.DEV) Object.assign(window, { pulseq: current });
     message.hidden = true;
   } catch (e) {
@@ -354,6 +356,18 @@ function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void 
     opts,
   );
 }
+
+// The plot at 3× resolution, named after the file
+saveButton.addEventListener("click", async () => {
+  if (!current) return;
+  const blob = await current.plot.exportPng(3);
+  if (!blob) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(fileName.textContent || "sequence").replace(/\.seq$/i, "")}.png`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
 
 // Remembered per browser; storage may be unavailable (private mode).
 try {

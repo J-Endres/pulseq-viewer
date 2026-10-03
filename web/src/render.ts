@@ -24,6 +24,8 @@ const RIGHT = 12;
 const BRACKET_ROW = 22;
 const BRACKET_TOP = 6;
 const AXIS = 34;
+/** Paper style: tick labels plus a "Time (ms)" title. */
+const AXIS_PAPER = 48;
 const ROW_GAP = 8;
 /** Most iteration combinations drawn for stacked loops. */
 const MAX_COMBOS = 256;
@@ -71,6 +73,10 @@ export class Plot {
   /** Bracket hit boxes from the last draw. */
   brackets: Bracket[] = [];
   private plan: StackPlan = { owned: [], loops: [], iters: [] };
+  /** Publication style (`--plot-style: paper`): framed axes, round ticks, axis titles. */
+  private paper = false;
+  /** Canvas font family (`--plot-font`, else the page font). */
+  private font = "sans-serif";
 
   constructor(
     readonly canvas: HTMLCanvasElement,
@@ -114,7 +120,7 @@ export class Plot {
       x: GUTTER,
       y,
       w: Math.max(1, this.width - GUTTER - RIGHT),
-      h: Math.max(1, this.height - y - AXIS),
+      h: Math.max(1, this.height - y - (this.paper ? AXIS_PAPER : AXIS)),
     };
   }
 
@@ -138,9 +144,14 @@ export class Plot {
     return -1;
   }
 
+  /** The label row is an interactive aid: not shown in paper style. */
+  private get showLabelRow(): boolean {
+    return this.hasLabels && !this.paper;
+  }
+
   /** Label row at the bottom of the plot area, or null without labels. */
   private labelRow(): Rect | null {
-    if (!this.hasLabels) return null;
+    if (!this.showLabelRow) return null;
     const a = this.area;
     return { x: a.x, y: a.y + a.h - LABEL_ROW, w: a.w, h: LABEL_ROW };
   }
@@ -148,7 +159,7 @@ export class Plot {
   private rows(): Rect[] {
     const a = this.area;
     const total = ROWS.reduce((s, r) => s + r.weight, 0);
-    const labels = this.hasLabels ? LABEL_ROW + ROW_GAP : 0;
+    const labels = this.showLabelRow ? LABEL_ROW + ROW_GAP : 0;
     const free = a.h - labels - ROW_GAP * (ROWS.length - 1);
     let y = a.y;
     return ROWS.map((r) => {
@@ -163,10 +174,12 @@ export class Plot {
     const { ctx, state } = this;
     const css = getComputedStyle(this.canvas);
     const color = (name: string) => css.getPropertyValue(name).trim();
+    this.paper = color("--plot-style") === "paper";
+    this.font = color("--plot-font") || css.fontFamily;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = color("--surface");
     ctx.fillRect(0, 0, this.width, this.height);
-    ctx.font = `12px ${css.fontFamily}`;
+    ctx.font = `12px ${this.font}`;
     ctx.textBaseline = "middle";
 
     const a = this.area;
@@ -216,6 +229,7 @@ export class Plot {
     this.drawOverlay(rows, css);
 
     this.drawLabels(color);
+    if (this.paper) this.drawPaperAxes(rows, color);
     this.drawAxis(color);
 
     // Hover line
@@ -347,7 +361,7 @@ export class Plot {
     ctx.beginPath();
     ctx.rect(a.x, a.y, a.w, a.h);
     ctx.clip();
-    ctx.font = `11px ${getComputedStyle(this.canvas).fontFamily}`;
+    ctx.font = `11px ${this.font}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
     ctx.setLineDash([2, 3]);
@@ -358,18 +372,29 @@ export class Plot {
       ctx.fillStyle = color("--collapsed");
       ctx.fillRect(x0, a.y, x1 - x0, a.h);
       if (x1 - x0 < 4) continue;
-      ctx.strokeStyle = color("--bracket");
-      ctx.beginPath();
-      for (const x of [x0, x1]) {
-        ctx.moveTo(Math.round(x) + 0.5, a.y);
-        ctx.lineTo(Math.round(x) + 0.5, a.y + a.h);
+      if (!this.paper) {
+        // Paper style marks collapsed delays with axis breaks instead
+        ctx.strokeStyle = color("--bracket");
+        ctx.beginPath();
+        for (const x of [x0, x1]) {
+          ctx.moveTo(Math.round(x) + 0.5, a.y);
+          ctx.lineTo(Math.round(x) + 0.5, a.y + a.h);
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
       const label = formatSeconds(d[i + 2]!);
       if (ctx.measureText(label).width + 6 <= x1 - x0) {
         ctx.fillStyle = color("--text-muted");
-        // Above the label row, which has text of its own
-        ctx.fillText(label, (x0 + x1) / 2, (this.labelRow()?.y ?? a.y + a.h) - 2);
+        // Above the label row, which has text of its own. Paper style
+        // draws an axis break at the centre, so the text goes beside it.
+        const bottom = (this.labelRow()?.y ?? a.y + a.h) - (this.paper ? ROW_GAP + 3 : 2);
+        if (this.paper) {
+          ctx.textAlign = "left";
+          ctx.fillText(label, (x0 + x1) / 2 + 9, bottom);
+          ctx.textAlign = "center";
+        } else {
+          ctx.fillText(label, (x0 + x1) / 2, bottom);
+        }
       }
     }
     ctx.restore();
@@ -381,7 +406,7 @@ export class Plot {
     const rect = this.labelRow();
     if (!rect) return;
     const { ctx, state } = this;
-    const font = getComputedStyle(this.canvas).fontFamily;
+    const font = this.font;
     ctx.fillStyle = color("--text");
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
@@ -439,13 +464,14 @@ export class Plot {
   }
 
   private drawRowFrame(rect: Rect, ch: number, color: (n: string) => string): void {
+    if (this.paper) return this.drawPaperFrame(rect, ch, color);
     const { ctx } = this;
     const row = ROWS[ch]!;
     ctx.fillStyle = color("--text");
     ctx.textAlign = "left";
-    ctx.font = `600 12px ${getComputedStyle(this.canvas).fontFamily}`;
+    ctx.font = `600 12px ${this.font}`;
     ctx.fillText(row.label, 8, rect.y + Math.min(10, rect.h / 2));
-    ctx.font = `11px ${getComputedStyle(this.canvas).fontFamily}`;
+    ctx.font = `11px ${this.font}`;
     if (row.unit) {
       ctx.fillStyle = color("--text-muted");
       ctx.fillText(row.unit, 8, rect.y + Math.min(24, rect.h / 2 + 12));
@@ -485,6 +511,152 @@ export class Plot {
   }
 
   /** Per-column (min, max) envelope over the horizontal span `span`. */
+  /** Matplotlib-like axes: zero line, round outward y ticks, rotated y label,
+   * legend inside the axes. The frame itself is drawn after the data. */
+  private drawPaperFrame(rect: Rect, ch: number, color: (n: string) => string): void {
+    const { ctx } = this;
+    const row = ROWS[ch]!;
+    const y = this.yScale(ch, rect);
+    const max = this.channelMax[ch]!;
+    const lo = row.symmetric ? -max : 0;
+
+    ctx.strokeStyle = color("--grid");
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(rect.x, Math.round(y(0)) + 0.5);
+    ctx.lineTo(rect.x + rect.w, Math.round(y(0)) + 0.5);
+    ctx.stroke();
+
+    // Phase in multiples of π; elsewhere round ticks, about one per 30 px
+    // but at least three.
+    let ticks: [number, string][];
+    if (ch === PHASE_ROW) {
+      ticks = [[-Math.PI, "−π"], [0, "0"], [Math.PI, "π"]];
+    } else {
+      const roundTicks = (step: number) => {
+        const out: [number, string][] = [];
+        for (let v = Math.ceil(lo / step) * step; v <= max + step * 1e-9; v += step) {
+          const clean = Math.abs(v) < step * 1e-9 ? 0 : v;
+          out.push([clean, formatValue(clean).replace("-", "−")]);
+        }
+        return out;
+      };
+      const step = niceStep((max - lo) / Math.max(1, Math.min(4, Math.floor(rect.h / 30))));
+      ticks = roundTicks(step);
+      if (ticks.length < 3) ticks = roundTicks(niceStep(step / 2.5));
+    }
+    ctx.strokeStyle = color("--axis");
+    ctx.fillStyle = color("--text");
+    ctx.font = `11px ${this.font}`;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.beginPath();
+    for (const [v, text] of ticks) {
+      const ty = Math.round(y(v)) + 0.5;
+      ctx.moveTo(rect.x - 4, ty);
+      ctx.lineTo(rect.x, ty);
+      ctx.fillText(text, rect.x - 6, ty);
+    }
+    ctx.stroke();
+
+    // y label, rotated
+    const label = row.unit ? `${row.label} (${row.unit})` : row.label;
+    ctx.save();
+    ctx.translate(14, rect.y + rect.h / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = "center";
+    ctx.font = `12px ${this.font}`;
+    const fits = ctx.measureText(label).width <= rect.h;
+    ctx.fillText(fits ? label : row.label, 0, 0);
+    ctx.restore();
+
+    if (row.legend && rect.h >= 40) {
+      // Legend box in the top right corner of the axes
+      ctx.font = `11px ${this.font}`;
+      const entry = (name: string) => 18 + ctx.measureText(name).width;
+      const w = row.legend.reduce((sum, [name]) => sum + entry(name) + 8, 4);
+      const x0 = rect.x + rect.w - w - 4;
+      const y0 = rect.y + 4;
+      ctx.fillStyle = color("--surface");
+      ctx.strokeStyle = color("--grid");
+      ctx.fillRect(x0, y0, w, 16);
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, 15);
+      let x = x0 + 6;
+      ctx.textAlign = "left";
+      for (const [name, swatch] of row.legend) {
+        ctx.strokeStyle = color(swatch);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y0 + 8);
+        ctx.lineTo(x + 14, y0 + 8);
+        ctx.stroke();
+        ctx.fillStyle = color("--text");
+        ctx.fillText(name, x + 18, y0 + 8.5);
+        x += entry(name) + 8;
+      }
+      ctx.lineWidth = 1;
+    }
+  }
+
+  /** Paper style: the axes frames, x ticks on every row, and axis breaks at
+   * collapsed delays. Drawn over the data, like matplotlib spines. */
+  private drawPaperAxes(rows: Rect[], color: (n: string) => string): void {
+    const { ctx, state } = this;
+    const frames = [...rows];
+    const labelRow = this.labelRow();
+    if (labelRow) frames.push(labelRow);
+    const { ticks, breaks } = this.timeAxis();
+    ctx.strokeStyle = color("--axis");
+    ctx.lineWidth = 1;
+    for (const r of frames) {
+      ctx.strokeRect(Math.round(r.x) + 0.5, Math.round(r.y) + 0.5, Math.round(r.w) - 1, Math.round(r.h) - 1);
+      ctx.beginPath();
+      for (const { x } of ticks) {
+        const bottom = Math.round(r.y + r.h) - 0.5;
+        ctx.moveTo(x, bottom);
+        ctx.lineTo(x, bottom + 4);
+      }
+      ctx.stroke();
+    }
+
+    // Axis breaks where real time jumps: a gap in the frame with two slashes
+    for (const x of breaks) {
+      if (x < this.area.x + 6 || x > this.area.x + this.area.w - 6) continue;
+      for (const r of frames) {
+        for (const yy of [r.y + 0.5, r.y + r.h - 0.5]) {
+          ctx.fillStyle = color("--surface");
+          ctx.fillRect(x - 3, yy - 2, 6, 4);
+          ctx.beginPath();
+          ctx.moveTo(x - 6, yy + 4);
+          ctx.lineTo(x - 2, yy - 4);
+          ctx.moveTo(x + 2, yy + 4);
+          ctx.lineTo(x + 6, yy - 4);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  /**
+   * Render at `scale` × the CSS size without the hover line, as PNG.
+   */
+  async exportPng(scale = 3): Promise<Blob | null> {
+    const { state } = this;
+    const [dpr, hover] = [this.dpr, state.hover];
+    state.hover = null;
+    this.dpr = scale;
+    this.canvas.width = Math.round(this.width * scale);
+    this.canvas.height = Math.round(this.height * scale);
+    this.draw();
+    const blob = await new Promise<Blob | null>((resolve) => this.canvas.toBlob(resolve, "image/png"));
+    this.dpr = dpr;
+    state.hover = hover;
+    this.canvas.width = Math.round(this.width * dpr);
+    this.canvas.height = Math.round(this.height * dpr);
+    this.draw();
+    return blob;
+  }
+
   private drawEnvelope(
     d: Float32Array,
     columns: number,
@@ -611,7 +783,13 @@ export class Plot {
         : shown !== null && shown < loop.count
           ? `${shown} of ${loop.count}`
           : `all ${loop.count}`;
-      const label = `Loop ${loop.name} · ${which}`;
+      // Paper style: just the iterations, no loop name
+      const paperText = !stacked
+        ? `iteration ${iter}/${loop.count}`
+        : shown !== null && shown < loop.count
+          ? `${shown} of ${loop.count} iterations`
+          : `${loop.count} iterations`;
+      const label = this.paper ? paperText : `Loop ${loop.name} · ${which}`;
       const short = stacked ? which : `${iter}/${loop.count}`;
       const visible0 = Math.max(x0, a.x);
       const visible1 = Math.min(x1, a.x + a.w);
@@ -624,36 +802,87 @@ export class Plot {
       ctx.fillRect(cx - tw / 2 - 4, y - 8, tw + 8, 16);
       ctx.fillStyle = color(focused ? "--accent" : "--text");
       ctx.textAlign = "center";
-      ctx.font = `${focused ? 600 : 400} 12px ${getComputedStyle(this.canvas).fontFamily}`;
+      ctx.font = `${focused ? 600 : 400} 12px ${this.font}`;
       ctx.fillText(text, cx, y);
     }
     ctx.restore();
+  }
+
+  /**
+   * Time axis at round real times, placed through the display → real mapping
+   * of the current iterations (stacked loops at their first iteration).
+   * `breaks` are the x positions where real time jumps: the centre of a
+   * collapsed delay, the end of a stacked loop, a loop shown at a later
+   * iteration. Labels that would overlap the previous one are null.
+   */
+  private timeAxis(): { ticks: { x: number; label: string | null }[]; breaks: number[] } {
+    const { ctx, state } = this;
+    const a = this.area;
+    const iters = state.iters.map((it, id) => (state.stacked[id] ? 0 : it));
+    const step = niceStep(((state.t1 - state.t0) * 1e3) / Math.max(2, a.w / 90));
+    const pieces = state.viewer.time_segments(iters, state.t0, state.t1);
+    ctx.font = `11px ${this.font}`;
+    const ticks: { x: number; label: string | null }[] = [];
+    const breaks: number[] = [];
+    let lastRight = -Infinity;
+    for (let i = 0; i < pieces.length; i += 3) {
+      const [d0, d1, real] = [pieces[i]!, pieces[i + 1]!, pieces[i + 2]!];
+      if (i > 0 && d0 > state.t0 && d0 < state.t1) breaks.push(this.xAt(d0));
+      const r0 = (real + Math.max(d0, state.t0) - d0) * 1e3;
+      const r1 = (real + Math.min(d1, state.t1) - d0) * 1e3;
+      // Before a jump, leave the end tick to the piece after it.
+      const end = i + 3 < pieces.length ? r1 - step * 1e-6 : r1 + step * 1e-9;
+      for (let ms = Math.ceil(r0 / step - 1e-9) * step; ms <= end; ms += step) {
+        const x = Math.round(this.xAt(d0 + (ms / 1e3 - real))) + 0.5;
+        const label = formatMs(ms, step);
+        const half = ctx.measureText(label).width / 2;
+        const fits = x - half >= GUTTER - 2 && x + half <= this.width - 2 && x - half >= lastRight + 6;
+        if (fits) lastRight = x + half;
+        ticks.push({ x, label: fits ? label : null });
+      }
+    }
+    return { ticks, breaks };
   }
 
   private drawAxis(color: (n: string) => string): void {
     const { ctx, state } = this;
     const a = this.area;
     const y = a.y + a.h + 6;
-    const spanMs = (state.t1 - state.t0) * 1e3;
-    const step = niceStep(spanMs / Math.max(2, a.w / 90));
-    ctx.fillStyle = color("--text-muted");
+    const { ticks, breaks } = this.timeAxis();
+    ctx.fillStyle = color(this.paper ? "--text" : "--text-muted");
     ctx.strokeStyle = color("--grid");
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.font = `11px ${getComputedStyle(this.canvas).fontFamily}`;
-    const first = Math.ceil((state.t0 * 1e3) / step) * step;
+    ctx.font = `11px ${this.font}`;
     ctx.beginPath();
-    for (let ms = first; ms <= state.t1 * 1e3; ms += step) {
-      const x = Math.round(this.xAt(ms / 1e3)) + 0.5;
+    for (const { x, label } of ticks) {
       ctx.moveTo(x, y - 6);
       ctx.lineTo(x, y - 2);
-      const label = formatMs(ms, step);
-      const half = ctx.measureText(label).width / 2;
-      if (x - half >= GUTTER - 2 && x + half <= this.width - 2) ctx.fillText(label, x, y);
+      if (label) ctx.fillText(label, x, y);
     }
     ctx.stroke();
-    ctx.textAlign = "right";
-    ctx.fillText("ms", GUTTER - 6, y);
+    if (!this.paper) {
+      // Jumps in real time: two slashes between the tick marks (paper style
+      // cuts the frames instead)
+      ctx.strokeStyle = color("--text-muted");
+      ctx.beginPath();
+      for (const x of breaks) {
+        ctx.moveTo(x - 5, y - 1);
+        ctx.lineTo(x - 2, y - 7);
+        ctx.moveTo(x + 2, y - 1);
+        ctx.lineTo(x + 5, y - 7);
+      }
+      ctx.stroke();
+    }
+    if (this.paper) {
+      ctx.fillStyle = color("--text");
+      ctx.font = `12px ${this.font}`;
+      ctx.textAlign = "center";
+      ctx.fillText("Time (ms)", a.x + a.w / 2, y + 18);
+    } else {
+      ctx.textAlign = "right";
+      ctx.fillText("ms", GUTTER - 6, y);
+    }
     ctx.textBaseline = "middle";
   }
 }
