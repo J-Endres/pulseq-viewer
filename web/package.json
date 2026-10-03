@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Browser viewer for Pulseq .seq files",
   "scripts": {
+    "wasm": "cargo build --release --target wasm32-unknown-unknown -p seq-core && wasm-bindgen --target web --out-dir src/wasm ../target/wasm32-unknown-unknown/release/seq_core.wasm",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"

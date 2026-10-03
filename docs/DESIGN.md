@@ -37,13 +37,17 @@ Everything runs in the browser. The file is read locally and never uploaded.
 ### Repository layout
 
 ```
-crates/seq-core/        Rust: loader glue, loop detection, waveforms, wasm API
+crates/seq-core/        Rust crate
+  src/loops.rs          loop detection on token strings
+  src/model.rs          loading, signatures, display layout, waveforms
+  src/lib.rs            wasm API
+  tests/                tests against real .seq files
 web/                    Vite app
-  src/main.ts           entry point, file input, wiring
-  src/timeline.ts       display-time model built from the loop tree
+  src/main.ts           entry point, file loading, pointer/keyboard input
+  src/state.ts          loops, iteration indices, view window, change events
   src/render.ts         canvas renderer
-  src/controls.ts       loop iteration controls
-  src/wasm/             wasm-pack output (generated, not committed)
+  src/controls.ts       loop panel
+  src/wasm/             wasm-bindgen output (generated, not committed)
 docs/DESIGN.md          this document
 .github/workflows/      Pages build + deploy
 ```
@@ -100,46 +104,47 @@ of a body of length `p`. For every period `p` from 1 to `P_max`:
 2. A run starting at `a` with length `L` is a repeat with body length `p` and
    `k = ⌊L / p⌋ + 1` copies.
 
-The best repeat is the one covering the most blocks (`p·k`). Ties go to the
-smaller period, then to the earlier start. `P_max` is 512 tokens; after inner
-loops are collapsed (below) outer loop bodies are only a few tokens long.
-Cost is `O(n · P_max)` per pass.
+`P_max` is 512 tokens. Cost is `O(n · P_max)` per pass.
 
 ### Choosing where an iteration starts
 
 A run with period `p` can be read with its body starting at any of `p`
 offsets. The body is rotated so it starts at the first block in the run that
 contains an RF event; the blocks before that offset stay outside the loop.
-Without an RF event the run starts where the scan found it. The rotated
-repeat is kept if it still has `k ≥ 2` copies.
+If the run has no RF block, or the rotation would leave fewer than two
+copies, the run starts where the scan found it.
 
 ### Collapsing and nesting
 
-The chosen repeat is replaced in `s` by a single new token representing
-`loop(body, k)`. Loop tokens are interned like signatures: two loops are the
-same token exactly when they have the same body tokens and the same `k`.
-The search then runs again on the shortened string, until no repeat with
-`k ≥ 2` remains.
+Each pass collects the repeats of all periods and selects a non-overlapping
+set greedily: most blocks covered (`p·k`) first, then smaller period, then
+earlier start. Every selected repeat is replaced in `s` by a single token
+representing `loop(body, k)`, and the next pass runs on the shortened string,
+until no repeat with `k ≥ 2` remains.
 
-Because inner loops collapse first into single tokens, outer loops appear as
-short repeats of those tokens on later passes, and nesting falls out of the
-iteration: phase-encoding lines collapse into one token, then slices, then
-averages.
+The body of a selected repeat is compressed with the same procedure before
+the loop token is made, so loops nested inside it are found too. Loop tokens
+are interned like signatures: two loops are the same token exactly when they
+have the same compressed body and the same `k`.
+
+Nesting therefore comes out in two ways that give the same tree: an outer loop
+whose body fits in `P_max` is found first and its inner loops come from
+compressing its body; an outer loop with a longer body is found on a later
+pass, after its inner loops have collapsed into single tokens.
 
 ### Result: the loop tree
 
 The final string is the top level of a tree:
 
 ```
-Node = Block(index)
-     | Loop { body: [Node], count: k, first_block: index, blocks_per_iter: m }
+Node = Block
+     | Loop { body: [Node], count: k }
 ```
 
 Because every iteration of a loop consists of identical tokens, every
 iteration spans the same number of blocks `m` and the same duration. The
-concrete block for a position in the body is therefore pure arithmetic:
-`first_block + iteration · m + offset`. This is what lets the frontend map an
-iteration selection to block indices without asking wasm.
+concrete block for a position in the body is therefore pure arithmetic on the
+current iteration indices.
 
 ## Timeline model
 
@@ -149,10 +154,21 @@ The display axis is **display time**, built from the loop tree:
 - A loop occupies the duration of **one** iteration of its body, with nested
   loops inside the body also counted as one iteration.
 
-The timeline is a list of segments, each with a display-time start, a width,
-and either a block range (linear part) or a loop node. Mapping display time to
-real time requires the current iteration of every enclosing loop, which the
-stack-mode state provides.
+The tree is laid out once after loading, in pre-order, into two lists:
+
+- **Loops**: parent loop, depth, count `k`, blocks per iteration `m`, block
+  offset from the start of the parent's iteration, display start and display
+  duration.
+- **Leaves** (block positions): parent loop, block offset from the start of
+  the parent's iteration, display start and display duration. Leaves are
+  sorted by display start, so the blocks in a time window are found by binary
+  search.
+
+For given iteration indices, the first block of a loop's current iteration is
+`start(parent) + offset + iteration · m`, computed for all loops in one pass
+over the pre-ordered list; a leaf's block is `start(parent) + offset`. Real
+time at a display time is the real start of the resolved block plus the offset
+into it.
 
 ## Stack mode
 
@@ -161,16 +177,18 @@ Stack mode shows exactly one iteration of every loop at a time.
 - **State**: one iteration index per loop node, starting at 0. A loop nested
   in another loop's body has one shared index, independent of which outer
   iteration is shown.
-- **Resolving blocks**: the renderer walks the timeline; for each loop
-  segment it applies the current indices top-down to get the concrete block
-  indices to draw.
 - **Controls**:
-  - Above the plot, every loop has a bracket spanning its segment, labelled
-    with its current iteration and count (`7 / 128`).
+  - Above the plot, every loop has a bracket spanning its segment, one row per
+    nesting depth, labelled with its name and current iteration
+    (`Loop 1.2 · 7 / 128`). Loops are named by position: top-level loops
+    `1`, `2`, …; loops inside loop `1` are `1.1`, `1.2`, ….
   - Scrolling the mouse wheel over a bracket steps that loop's iteration;
-    clicking the bracket focuses it, after which arrow keys step it.
-  - A panel lists all loops, nested by depth, each with a slider and number
-    field for its iteration.
+    clicking the bracket focuses it, after which arrow keys step it (Home and
+    End jump to the first and last iteration, Escape clears the focus).
+  - A side panel lists all loops, nested by depth, each with its count,
+    blocks per iteration, real duration of one iteration, and a slider and
+    number field for its iteration. The focused loop is highlighted in both
+    the panel and the plot.
 - **Fixed y-scales**: each channel's y-range is the maximum over the whole
   sequence, so stepping through iterations shows amplitude changes instead of
   rescaling.
@@ -179,62 +197,93 @@ Stack mode shows exactly one iteration of every loop at a time.
 
 - **One `<canvas>`** filling the plot area, sized with `devicePixelRatio` for
   sharp lines. Rows from top to bottom: RF magnitude, RF phase, Gx, Gy, Gz,
-  ADC. All rows share the display-time x-axis.
+  ADC. All rows share the display-time x-axis; each row has its label, unit,
+  zero line and min/max labels on the left.
 - **Units**: RF magnitude in Hz, RF phase in rad, gradients in kHz/m, time in
   ms.
-- **Waveform data** comes from wasm: `waveforms(block_indices, offsets)` takes
-  the resolved block indices and their display-time offsets and returns one
-  polyline per channel as `Float32Array`s of interleaved `(t, value)` pairs,
-  already in display time.
+- **Waveform data** comes from wasm as a per-pixel-column envelope:
+  `waveforms(iters, t0, t1, columns)` resolves the blocks visible in the
+  window for the current iterations and returns, per channel and column, the
+  minimum and maximum value (NaN where nothing is drawn). Drawing cost
+  depends on canvas width, not on sequence length.
   - Gradients use the breakpoints of their interpreted shapes (four points for
-    a trapezoid).
-  - RF magnitude and phase use the RF shape samples, scaled by amplitude and
-    with phase offset applied.
-  - ADC is drawn as a filled bar over each acquisition window; when zoomed in
-    far enough, one tick per sample.
-- **Level of detail**: when a polyline has more than two points per pixel
-  column, it is reduced to the min/max per column before drawing, so drawing
-  cost depends on canvas width, not on sequence length.
-- **Navigation**: wheel zooms around the cursor, drag pans, double-click
-  resets to the full timeline. Loop segments get a light background tint so
-  their extent is visible inside each row.
+    a trapezoid); each segment between breakpoints contributes its exact
+    value range to every column it crosses.
+  - RF magnitude is `|amp| · |shape|`. RF phase is `arg(shape)` plus the
+    event phase (plus π for a negative amplitude), wrapped to (−π, π], and
+    drawn only where the magnitude is nonzero.
+  - ADC is drawn as a bar over each acquisition window, with one tick per
+    sample once samples are at least 4 px apart.
+  - Blocks narrower than two columns contribute a per-block, per-channel
+    (min, max) summary computed at load time instead of their samples.
+    Summaries use per-shape statistics cached by shape, since pulseq-rs shares
+    shapes between blocks.
+- The renderer draws each column as a vertical line from min to max,
+  connected to the neighbouring columns, which shows a smooth curve when
+  zoomed in and the filled extent of dense waveforms when zoomed out.
+- **Colours**: one fixed hue per channel (RF blue, phase violet, Gx orange,
+  Gy aqua, Gz magenta, ADC green), with separate light and dark values chosen
+  by `prefers-color-scheme`. Loop extents get a light background tint in all
+  rows.
+- **Navigation**: wheel zooms around the cursor, horizontal wheel and drag
+  pan, double-click resets to the full timeline. The footer shows the block
+  number and real time under the pointer, and the sequence name, block count,
+  real duration, loop count and interpreter warnings.
 - Redraws are scheduled with `requestAnimationFrame` and coalesced.
 
 ## wasm API
 
 ```rust
 #[wasm_bindgen]
-pub struct Viewer { /* interpreted sequence + loop tree */ }
+pub struct Viewer { /* interpreted sequence, loop layout, block summaries */ }
 
 #[wasm_bindgen]
 impl Viewer {
-    /// Parse and analyse a .seq file. Errors become JS exceptions with a message.
+    /// Parse, interpret and analyse a .seq file. Errors become JS exceptions
+    /// with the pulseq-rs message.
     pub fn load(source: &str) -> Result<Viewer, JsError>;
 
-    /// Number of blocks and per-block durations (real time, seconds).
+    pub fn name(&self) -> Option<String>;
+    pub fn warnings(&self) -> Vec<String>;
     pub fn block_count(&self) -> u32;
-    pub fn block_durations(&self) -> Float64Array;
+    pub fn duration(&self) -> f64;          // real [s]
+    pub fn display_duration(&self) -> f64; // display [s]
 
-    /// Loop tree, flattened in pre-order. Per node: kind, parent, count,
-    /// first_block, blocks_per_iter, body range.
-    pub fn loop_tree(&self) -> Uint32Array;
+    /// Max |value| per channel, for fixed y-scales.
+    pub fn channel_max(&self) -> Vec<f64>;
 
-    /// Per-channel max |amplitude| over the whole sequence, for fixed y-scales.
-    pub fn channel_ranges(&self) -> Float64Array;
+    /// Loops in pre-order, 8 values each: parent (-1 at top level), depth,
+    /// count, blocks per iteration, first block, display start, display
+    /// duration, real duration of one iteration.
+    pub fn loops(&self) -> Vec<f64>;
 
-    /// Polylines for the given blocks placed at the given display-time offsets.
-    pub fn waveforms(&self, blocks: &[u32], offsets: &[f64]) -> Waveforms;
+    /// Per channel and column, (min, max) in the display window [t0, t1].
+    pub fn waveforms(&self, iters: &[u32], t0: f64, t1: f64, columns: u32) -> Vec<f32>;
+
+    /// Display times of ADC samples in the window; empty if more than `max`.
+    pub fn adc_samples(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64>;
+
+    /// [block index, real time, block display start] under display time t.
+    pub fn hover(&self, iters: &[u32], t: f64) -> Vec<f64>;
 }
 ```
 
+`iters` is the frontend's `Uint32Array` of current iteration indices, one per
+loop; all per-frame work (resolving blocks, building envelopes) happens in one
+call.
+
 ## Build and deploy
 
-- `wasm-pack build crates/seq-core --target web --out-dir ../../web/src/wasm`
-  produces the wasm module and its JS bindings; Vite bundles them.
-- `vite build` with `base: "./"` produces a static site in `web/dist` that
-  works under the repository's Pages subpath.
-- `.github/workflows/pages.yml` runs on pushes to `main` (and manually): it
-  installs Rust with the `wasm32-unknown-unknown` target and `wasm-pack`,
-  builds wasm, builds the site, and deploys `web/dist` with
-  `actions/deploy-pages`.
-- Local development: `npm run dev` in `web/`, after building wasm once.
+- `npm run wasm` (in `web/`) builds the crate for `wasm32-unknown-unknown` in
+  release mode and runs `wasm-bindgen --target web` into `web/src/wasm`; Vite
+  bundles the module and its JS bindings. The `wasm-bindgen` CLI version
+  matches the crate's pinned `wasm-bindgen` dependency.
+- `npm run build` type-checks and runs `vite build` with `base: "./"`,
+  producing a static site in `web/dist` that works under the repository's
+  Pages subpath.
+- `.github/workflows/pages.yml` runs on pull requests, pushes to `main` and
+  manually: it installs Rust with the wasm target and the `wasm-bindgen` CLI,
+  runs `cargo test`, builds wasm and the site, and on `main` deploys
+  `web/dist` with `actions/deploy-pages`.
+- Local development: `npm run wasm` once (and after Rust changes), then
+  `npm run dev`.
