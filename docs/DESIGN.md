@@ -39,6 +39,7 @@ Everything runs in the browser. The file is read locally and never uploaded.
 ```
 crates/seq-core/        Rust crate
   src/loops.rs          loop detection on token strings
+  src/labels.rs         label operations and running label values
   src/model.rs          loading, signatures, display layout, waveforms
   src/lib.rs            wasm API
   tests/                tests against the example .seq files
@@ -193,6 +194,29 @@ duration, so the hover readout still shows real time. The renderer shades
 collapsed blocks across all rows, marks their edges with dashed lines and
 labels them with their real duration when it fits.
 
+## Labels
+
+`labels.rs` reads the `LABELSET` / `LABELINC` operations of every block from
+the parsed sequence (the interpreted one keeps only per-ADC snapshots) and
+applies them like the interpreter: sets before increments, in block order.
+It keeps:
+
+- the labels the sequence uses, in a fixed order (counters SLC … TRID, then
+  flags NAV … ONCE);
+- for every block with label operations: the operations as text, sorted by
+  that order with value-changing operations first (`LIN=48 AVG=0 …`), and the
+  values of all labels after them.
+
+The values at any block come from a binary search over those blocks.
+
+- **Label row**: a tick at every visible block with label operations, for
+  the current iterations, with its text where there is room before the next
+  tick (truncated with "…").
+- **Hover panel**: while the pointer is over the plot, the side panel shows
+  the label values after the hovered block instead of the loop controls,
+  with values the block changed highlighted; it switches back when the
+  pointer leaves the plot. Sequences without labels keep the loop panel.
+
 ## Stack mode
 
 Stack mode shows exactly one iteration of every loop at a time.
@@ -220,7 +244,7 @@ Stack mode shows exactly one iteration of every loop at a time.
 
 - **One `<canvas>`** filling the plot area, sized with `devicePixelRatio` for
   sharp lines. Rows from top to bottom: RF magnitude (with ADC), phase (RF
-  and ADC), Gx, Gy, Gz. RF and ADC events never overlap in time, so the ADC
+  and ADC), Gx, Gy, Gz, and, for sequences with labels, a 22 px label row. RF and ADC events never overlap in time, so the ADC
   shares the RF row instead of taking a row of its own. All rows share the display-time x-axis; each row has its label, unit,
   zero line and min/max labels on the left.
 - **Units**: RF magnitude in Hz, RF phase in rad, gradients in kHz/m, time in
@@ -307,6 +331,13 @@ impl Viewer {
     /// Collapsed delays in the window, 3 values each: display start,
     /// display end, real duration.
     pub fn collapsed(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64>;
+
+    /// Labels used, their values after a block, the blocks with label
+    /// operations in the window (display start, event), and an event's text.
+    pub fn label_names(&self) -> Vec<String>;
+    pub fn labels_at(&self, block: u32) -> Vec<i32>;
+    pub fn label_marks(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64>;
+    pub fn label_text(&self, event: u32) -> String;
 
     /// [block index, real time, block display start] under display time t.
     pub fn hover(&self, iters: &[u32], t: f64) -> Vec<f64>;

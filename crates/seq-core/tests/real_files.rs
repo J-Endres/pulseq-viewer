@@ -116,11 +116,43 @@ fn adc_phase_follows_adc_event() {
             .find_map(|b| a.blocks[b].adc.as_ref())
             .unwrap();
         let expected = adc.phase - TAU * ((adc.phase + PI) / TAU).floor();
-        assert!(drawn.iter().all(|&v| (v as f64 - expected).abs() < 1e-5), "iter {iter}");
+        assert!(
+            drawn.iter().all(|&v| (v as f64 - expected).abs() < 1e-5),
+            "iter {iter}"
+        );
     }
     assert_eq!(w_len(&a, columns), CHANNELS * columns * 2);
 }
 
 fn w_len(a: &Analysis, columns: usize) -> usize {
     a.waveforms(&[0], 0.0, 1.0, columns).len()
+}
+
+#[test]
+fn labels_match_interpreter() {
+    let a = load("flash_je.seq");
+    assert_eq!(
+        a.labels.names,
+        ["AVG", "ECO", "LIN", "PAR", "REV", "REF", "IMA"]
+    );
+    let lin = a.labels.names.iter().position(|n| n == "LIN").unwrap();
+    let mut adcs = 0;
+    for (b, block) in a.blocks.iter().enumerate() {
+        if let Some(adc) = &block.adc {
+            assert_eq!(a.labels.at(b)[lin], adc.labels.lin, "block {b}");
+            adcs += 1;
+        }
+    }
+    assert_eq!(adcs, 96);
+    // Label marks follow the selected iteration.
+    let l = &a.loops[0];
+    let text = |iter: u32| {
+        a.label_marks(&[iter], l.disp_start, l.disp_start + l.disp_dur, 10)
+            .iter()
+            .map(|&(_, e)| a.labels.text(e).to_string())
+            .collect::<Vec<_>>()
+    };
+    // flash_je re-sets several labels every TR; changed values come first.
+    assert_eq!(text(0), ["LIN=48 AVG=0 PAR=0 REF=0 IMA=0", "ECO=0 REV=0"]);
+    assert_eq!(text(1), ["LIN=47 AVG=0 PAR=0 REF=0 IMA=0", "ECO=0 REV=0"]);
 }

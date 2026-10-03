@@ -24,6 +24,8 @@ const BRACKET_ROW = 22;
 const BRACKET_TOP = 6;
 const AXIS = 34;
 const ROW_GAP = 8;
+/** Height of the label row, shown only for sequences with labels. */
+const LABEL_ROW = 22;
 
 interface Rect {
   x: number;
@@ -47,6 +49,7 @@ export class Plot {
   private dpr = 1;
   private frame = 0;
   private channelMax: Float64Array;
+  private hasLabels: boolean;
   /** Bracket hit boxes from the last draw. */
   brackets: Bracket[] = [];
 
@@ -58,6 +61,7 @@ export class Plot {
     if (!ctx) throw new Error("Canvas 2D is not available");
     this.ctx = ctx;
     this.channelMax = state.viewer.channel_max();
+    this.hasLabels = state.viewer.label_names().length > 0;
   }
 
   resize(width: number, height: number): void {
@@ -115,10 +119,18 @@ export class Plot {
     return -1;
   }
 
+  /** Label row at the bottom of the plot area, or null without labels. */
+  private labelRow(): Rect | null {
+    if (!this.hasLabels) return null;
+    const a = this.area;
+    return { x: a.x, y: a.y + a.h - LABEL_ROW, w: a.w, h: LABEL_ROW };
+  }
+
   private rows(): Rect[] {
     const a = this.area;
     const total = ROWS.reduce((s, r) => s + r.weight, 0);
-    const free = a.h - ROW_GAP * (ROWS.length - 1);
+    const labels = this.hasLabels ? LABEL_ROW + ROW_GAP : 0;
+    const free = a.h - labels - ROW_GAP * (ROWS.length - 1);
     let y = a.y;
     return ROWS.map((r) => {
       const h = (free * r.weight) / total;
@@ -181,6 +193,7 @@ export class Plot {
       ctx.restore();
     });
 
+    this.drawLabels(color);
     this.drawAxis(color);
 
     // Hover line
@@ -230,9 +243,59 @@ export class Plot {
       const label = formatSeconds(d[i + 2]!);
       if (ctx.measureText(label).width + 6 <= x1 - x0) {
         ctx.fillStyle = color("--text-muted");
-        ctx.fillText(label, (x0 + x1) / 2, a.y + a.h - 2);
+        // Above the label row, which has text of its own
+        ctx.fillText(label, (x0 + x1) / 2, (this.labelRow()?.y ?? a.y + a.h) - 2);
       }
     }
+    ctx.restore();
+  }
+
+  /** Label row: a tick at every block that sets or increments labels, with
+   * its operations as text where there is room before the next tick. */
+  private drawLabels(color: (n: string) => string): void {
+    const rect = this.labelRow();
+    if (!rect) return;
+    const { ctx, state } = this;
+    const font = getComputedStyle(this.canvas).fontFamily;
+    ctx.fillStyle = color("--text");
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.font = `600 12px ${font}`;
+    ctx.fillText("Labels", 8, rect.y + rect.h / 2);
+    ctx.strokeStyle = color("--grid");
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(rect.x, Math.round(rect.y) + 0.5);
+    ctx.lineTo(rect.x + rect.w, Math.round(rect.y) + 0.5);
+    ctx.stroke();
+
+    const marks = state.viewer.label_marks(state.iters, state.t0, state.t1, 2000);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.x, rect.y, rect.w, rect.h);
+    ctx.clip();
+    ctx.font = `11px ${font}`;
+    const xs: number[] = [];
+    for (let i = 0; i < marks.length; i += 2) xs.push(Math.round(this.xAt(marks[i]!)) + 0.5);
+    ctx.strokeStyle = color("--accent");
+    ctx.beginPath();
+    for (const x of xs) {
+      ctx.moveTo(x, rect.y + 3);
+      ctx.lineTo(x, rect.y + rect.h - 3);
+    }
+    ctx.stroke();
+    ctx.fillStyle = color("--text-muted");
+    xs.forEach((x, k) => {
+      const end = Math.min(xs[k + 1] ?? Infinity, rect.x + rect.w) - 6;
+      const room = end - (x + 4);
+      if (room < 24) return;
+      let text = state.viewer.label_text(marks[2 * k + 1]!);
+      if (ctx.measureText(text).width > room) {
+        while (text.length > 1 && ctx.measureText(`${text}…`).width > room) text = text.slice(0, -1);
+        text += "…";
+      }
+      ctx.fillText(text, x + 4, rect.y + rect.h / 2);
+    });
     ctx.restore();
   }
 

@@ -1,3 +1,4 @@
+pub mod labels;
 pub mod loops;
 pub mod model;
 
@@ -109,6 +110,31 @@ impl Viewer {
             .into_iter()
             .flatten()
             .collect()
+    }
+
+    /// Labels the sequence sets or increments, in display order.
+    pub fn label_names(&self) -> Vec<String> {
+        self.a.labels.names.clone()
+    }
+
+    /// Values of `label_names` after the operations of block `block`.
+    pub fn labels_at(&self, block: u32) -> Vec<i32> {
+        self.a.labels.at(block as usize)
+    }
+
+    /// Blocks with label operations in `[t0, t1]`, 2 values each: display
+    /// start `[s]` and an event index for `label_text`; at most `max`.
+    pub fn label_marks(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64> {
+        self.a
+            .label_marks(iters, t0, t1, max as usize)
+            .into_iter()
+            .flat_map(|(t, e)| [t, e as f64])
+            .collect()
+    }
+
+    /// The operations of a label event, e.g. `LIN=48 AVG+1`.
+    pub fn label_text(&self, event: u32) -> String {
+        self.a.labels.text(event as usize).to_string()
     }
 
     /// `[block index, real time [s], block display start [s]]` under display

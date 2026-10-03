@@ -22,6 +22,10 @@ const message = $("#message");
 const panel = $("#loops");
 const readout = $("#readout");
 const info = $("#info");
+const loopsSection = $("#loops-section");
+const labelsSection = $("#labels-section");
+const labelsTitle = $("#labels-title");
+const labelsList = $("#labels");
 
 const wasmReady = init();
 
@@ -116,16 +120,39 @@ function show(viewer: Viewer): { state: State; plot: Plot; dispose: () => void }
 }
 
 function updateReadout(state: State): void {
-  if (state.hover === null) {
+  const h = state.hover === null ? null : state.viewer.hover(state.iters, state.hover);
+  if (!h || h.length === 0) {
     readout.textContent = "";
-    return;
-  }
-  const h = state.viewer.hover(state.iters, state.hover);
-  if (h.length === 0) {
-    readout.textContent = "";
+    showLabels(state, null);
     return;
   }
   readout.textContent = `block ${h[0]! + 1} · t = ${(h[1]! * 1e3).toFixed(3)} ms`;
+  showLabels(state, h[0]!);
+}
+
+/** While hovering a block, the side panel shows label values instead of loops. */
+function showLabels(state: State, block: number | null): void {
+  const names = state.viewer.label_names();
+  const show = block !== null && names.length > 0;
+  loopsSection.hidden = show;
+  labelsSection.hidden = !show;
+  if (!show) return;
+  const values = state.viewer.labels_at(block);
+  const before = block > 0 ? state.viewer.labels_at(block - 1) : new Int32Array(names.length);
+  labelsTitle.textContent = `Labels · block ${block + 1}`;
+  labelsList.replaceChildren(
+    ...names.flatMap((name, i) => {
+      const dt = document.createElement("dt");
+      const dd = document.createElement("dd");
+      dt.textContent = name;
+      dd.textContent = String(values[i]);
+      // Highlight values this block changed
+      const changed = values[i] !== before[i];
+      dt.classList.toggle("changed", changed);
+      dd.classList.toggle("changed", changed);
+      return [dt, dd];
+    }),
+  );
 }
 
 function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void {

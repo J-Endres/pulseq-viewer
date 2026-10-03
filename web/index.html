@@ -46,12 +46,19 @@
         </footer>
       </section>
       <aside>
-        <h2>Loops</h2>
-        <div id="loops"><p class="muted">No sequence loaded.</p></div>
+        <section id="loops-section">
+          <h2>Loops</h2>
+          <div id="loops"><p class="muted">No sequence loaded.</p></div>
+        </section>
+        <section id="labels-section" hidden>
+          <h2 id="labels-title">Labels</h2>
+          <dl id="labels"></dl>
+        </section>
         <p class="help muted">
           Scroll over a loop bracket to step through iterations. Click a bracket, then use the arrow keys.
           Scroll or pinch to zoom, drag to pan, double-click or double-tap to reset. Collapsed delays are shaded and
-          labelled with their real duration.
+          labelled with their real duration. While hovering the plot, this panel shows the label values at the
+          pointer.
         </p>
       </aside>
     </main>
