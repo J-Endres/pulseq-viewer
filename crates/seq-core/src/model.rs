@@ -20,7 +20,9 @@ pub const GX: usize = 2;
 pub const GY: usize = 3;
 pub const GZ: usize = 4;
 pub const ADC: usize = 5;
-pub const CHANNELS: usize = 6;
+/// Receiver phase; drawn in the RF phase row.
+pub const ADC_PHASE: usize = 6;
+pub const CHANNELS: usize = 7;
 
 /// Marks "no parent loop".
 pub const NONE: u32 = u32::MAX;
@@ -181,6 +183,7 @@ impl Analysis {
         }
         channel_max[RF_PHASE] = std::f64::consts::PI;
         channel_max[ADC] = 1.0;
+        channel_max[ADC_PHASE] = std::f64::consts::PI;
 
         let mut a = Self {
             name: seq.name,
@@ -294,6 +297,7 @@ impl Analysis {
         }
         if let Some(adc) = &block.adc {
             range(ADC, adc_extent(adc));
+            range(ADC_PHASE, adc_extent(adc));
         }
     }
 
@@ -539,6 +543,17 @@ fn adc_extent(adc: &int::Adc) -> (f64, f64) {
     (adc.delay, adc.delay + adc.num as f64 * adc.dwell)
 }
 
+/// Range covered by phases `lo..=hi` after wrapping to (-π, π].
+fn wrapped_range(lo: f64, hi: f64) -> (f64, f64) {
+    use std::f64::consts::PI;
+    let w = wrap_phase(lo);
+    if hi - lo >= 2.0 * PI || w + (hi - lo) > PI {
+        (-PI, PI)
+    } else {
+        (w, w + (hi - lo))
+    }
+}
+
 fn wrap_phase(p: f64) -> f64 {
     use std::f64::consts::{PI, TAU};
     p - TAU * ((p + PI) / TAU).floor()
@@ -606,6 +621,28 @@ fn add_block(env: &mut Envelope, block: &int::Block, t: f64) {
     if let Some(adc) = &block.adc {
         let (a, b) = adc_extent(adc);
         env.segment(ADC, t + a, 1.0, t + b, 1.0);
+        match &adc.phase_shape {
+            None => {
+                let p = wrap_phase(adc.phase);
+                env.segment(ADC_PHASE, t + a, p, t + b, p);
+            }
+            Some(s) => {
+                let t_adc = t + adc.delay;
+                let p = |i: usize| wrap_phase(adc.phase + s.amp[i]);
+                if s.time.len() == 1 {
+                    env.segment(ADC_PHASE, t + a, p(0), t + b, p(0));
+                }
+                for i in 1..s.time.len() {
+                    env.segment(
+                        ADC_PHASE,
+                        t_adc + s.time[i - 1],
+                        p(i - 1),
+                        t_adc + s.time[i],
+                        p(i),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -681,8 +718,14 @@ impl ShapeStats {
                 put(ch, g.amp * lo * GRAD_UNIT, g.amp * hi * GRAD_UNIT);
             }
         }
-        if block.adc.is_some() {
+        if let Some(adc) = &block.adc {
             put(ADC, 1.0, 1.0);
+            let (lo, hi) = match &adc.phase_shape {
+                Some(shape) => self.real(shape),
+                None => (0.0, 0.0),
+            };
+            let (lo, hi) = wrapped_range(adc.phase + lo, adc.phase + hi);
+            put(ADC_PHASE, lo, hi);
         }
         out
     }

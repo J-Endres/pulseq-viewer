@@ -97,3 +97,30 @@ fn collapse_delays() {
     a.set_collapse_delays(false);
     assert_eq!(a.display_duration, full);
 }
+
+#[test]
+fn adc_phase_follows_adc_event() {
+    use seq_core::model::{ADC_PHASE, CHANNELS};
+    use std::f64::consts::{PI, TAU};
+    let a = load("flash_je.seq");
+    let l = &a.loops[0];
+    let columns = 400;
+    for iter in [0u32, 1, 7] {
+        let w = a.waveforms(&[iter], l.disp_start, l.disp_start + l.disp_dur, columns);
+        let ch = &w[ADC_PHASE * columns * 2..(ADC_PHASE + 1) * columns * 2];
+        let drawn: Vec<f32> = ch.iter().copied().filter(|v| !v.is_nan()).collect();
+        assert!(!drawn.is_empty());
+        // The ADC of this iteration
+        let first = (l.first_block + iter as u64 * l.blocks_per_iter) as usize;
+        let adc = (first..first + l.blocks_per_iter as usize)
+            .find_map(|b| a.blocks[b].adc.as_ref())
+            .unwrap();
+        let expected = adc.phase - TAU * ((adc.phase + PI) / TAU).floor();
+        assert!(drawn.iter().all(|&v| (v as f64 - expected).abs() < 1e-5), "iter {iter}");
+    }
+    assert_eq!(w_len(&a, columns), CHANNELS * columns * 2);
+}
+
+fn w_len(a: &Analysis, columns: usize) -> usize {
+    a.waveforms(&[0], 0.0, 1.0, columns).len()
+}

@@ -218,8 +218,8 @@ Stack mode shows exactly one iteration of every loop at a time.
 ## Rendering
 
 - **One `<canvas>`** filling the plot area, sized with `devicePixelRatio` for
-  sharp lines. Rows from top to bottom: RF magnitude, RF phase, Gx, Gy, Gz,
-  ADC. All rows share the display-time x-axis; each row has its label, unit,
+  sharp lines. Rows from top to bottom: RF magnitude, phase (RF and ADC),
+  Gx, Gy, Gz, ADC. All rows share the display-time x-axis; each row has its label, unit,
   zero line and min/max labels on the left.
 - **Units**: RF magnitude in Hz, RF phase in rad, gradients in kHz/m, time in
   ms.
@@ -236,6 +236,11 @@ Stack mode shows exactly one iteration of every loop at a time.
     drawn only where the magnitude is nonzero.
   - ADC is drawn as a bar over each acquisition window, with one tick per
     sample once samples are at least 4 px apart.
+  - ADC phase is the event phase plus the per-sample phase shape if there is
+    one, wrapped to (−π, π], over the acquisition window. It is returned as
+    a seventh envelope channel and drawn in the phase row in the ADC colour,
+    so receiver and RF phase share one axis; the row has a small RF/ADC
+    legend in its label area.
   - Blocks narrower than two columns contribute a per-block, per-channel
     (min, max) summary computed at load time instead of their samples.
     Summaries use per-shape statistics cached by shape, since pulseq-rs shares
@@ -243,8 +248,8 @@ Stack mode shows exactly one iteration of every loop at a time.
 - The renderer draws each column as a vertical line from min to max,
   connected to the neighbouring columns, which shows a smooth curve when
   zoomed in and the filled extent of dense waveforms when zoomed out.
-- **Colours**: one fixed hue per channel (RF blue, phase violet, Gx orange,
-  Gy aqua, Gz magenta, ADC green), with separate light and dark values chosen
+- **Colours**: one fixed hue per channel (RF blue, RF phase violet, Gx
+  orange, Gy aqua, Gz magenta, ADC and ADC phase green), with separate light and dark values chosen
   by `prefers-color-scheme`. Loop extents get a light background tint in all
   rows.
 - **Navigation**: wheel zooms around the cursor, horizontal wheel and drag

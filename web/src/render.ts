@@ -3,13 +3,16 @@ import type { State } from "./state.ts";
 /** Channel rows, in the order `Viewer.waveforms` returns them. */
 const ROWS = [
   { label: "RF", unit: "Hz", color: "--ch-rf", weight: 1, symmetric: false },
-  { label: "RF phase", unit: "rad", color: "--ch-phase", weight: 0.7, symmetric: true },
+  { label: "Phase", unit: "rad", color: "--ch-phase", weight: 0.7, symmetric: true },
   { label: "Gx", unit: "kHz/m", color: "--ch-gx", weight: 1, symmetric: true },
   { label: "Gy", unit: "kHz/m", color: "--ch-gy", weight: 1, symmetric: true },
   { label: "Gz", unit: "kHz/m", color: "--ch-gz", weight: 1, symmetric: true },
   { label: "ADC", unit: "", color: "--ch-adc", weight: 0.35, symmetric: false },
 ] as const;
+const PHASE_ROW = 1;
 const ADC_ROW = 5;
+/** Extra channel after the rows: receiver phase, drawn in the phase row. */
+const ADC_PHASE = 6;
 
 /** Layout in CSS pixels. */
 const GUTTER = 104;
@@ -165,6 +168,10 @@ export class Plot {
       ctx.clip();
       if (ch === ADC_ROW) this.drawAdc(slice, columns, rect, color(row.color));
       else this.drawEnvelope(slice, columns, rect, this.yScale(ch, rect), color(row.color));
+      if (ch === PHASE_ROW) {
+        const adcPhase = data.subarray(ADC_PHASE * columns * 2, (ADC_PHASE + 1) * columns * 2);
+        this.drawEnvelope(adcPhase, columns, rect, this.yScale(ch, rect), color("--ch-adc"));
+      }
       ctx.restore();
     });
 
@@ -243,6 +250,20 @@ export class Plot {
     if (row.unit) {
       ctx.fillStyle = color("--text-muted");
       ctx.fillText(row.unit, 8, rect.y + Math.min(24, rect.h / 2 + 12));
+    }
+    if (ch === PHASE_ROW && rect.h >= 56) {
+      // Legend: colour swatch next to text in text colour
+      [["RF", "--ch-phase"], ["ADC", "--ch-adc"]].forEach(([name, swatch], i) => {
+        const y = rect.y + 38 + i * 13;
+        ctx.strokeStyle = color(swatch!);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(8, y);
+        ctx.lineTo(18, y);
+        ctx.stroke();
+        ctx.fillStyle = color("--text-muted");
+        ctx.fillText(name!, 22, y);
+      });
     }
     if (ch === ADC_ROW) return;
 
