@@ -14,6 +14,7 @@ const $ = <T extends HTMLElement>(sel: string) => {
 const fileInput = $<HTMLInputElement>("#file");
 const fileName = $("#file-name");
 const exampleSelect = $<HTMLSelectElement>("#example");
+const collapseInput = $<HTMLInputElement>("#collapse");
 const plotHost = $("#plot");
 const canvas = $<HTMLCanvasElement>("#canvas");
 const message = $("#message");
@@ -62,6 +63,7 @@ function openFile(file: File): void {
 }
 
 function show(viewer: Viewer): { state: State; plot: Plot; dispose: () => void } {
+  viewer.set_collapse_delays(collapseInput.checked);
   const state = new State(viewer);
   const plot = new Plot(canvas, state);
   canvas.hidden = false;
@@ -162,13 +164,33 @@ function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void 
     { signal, passive: false },
   );
 
+  // Active pointers (CSS position), for one-finger/mouse pan and two-finger pinch.
+  const pointers = new Map<number, { x: number; y: number }>();
   let drag: { x: number; t0: number; t1: number; moved: boolean } | null = null;
+  let pinch: { dist: number; t: number; span: number } | null = null;
+  // Set once a gesture became a pinch, until all pointers are up.
+  let pinched = false;
+  let lastTap = 0;
+
+  const twoPointers = () => {
+    const [p, q] = [...pointers.values()];
+    return { cx: (p!.x + q!.x) / 2, dist: Math.max(10, Math.hypot(p!.x - q!.x, p!.y - q!.y)) };
+  };
+
   canvas.addEventListener(
     "pointerdown",
     (e) => {
-      if (e.button !== 0) return;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
       canvas.setPointerCapture(e.pointerId);
-      drag = { x: pos(e).x, t0: state.t0, t1: state.t1, moved: false };
+      pointers.set(e.pointerId, pos(e));
+      if (pointers.size === 2) {
+        const { cx, dist } = twoPointers();
+        pinch = { dist, t: plot.timeAt(cx), span: state.t1 - state.t0 };
+        pinched = true;
+        drag = null;
+      } else if (pointers.size === 1) {
+        drag = { x: pos(e).x, t0: state.t0, t1: state.t1, moved: false };
+      }
     },
     opts,
   );
@@ -177,6 +199,15 @@ function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void 
     (e) => {
       const { x, y } = pos(e);
       const a = plot.area;
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x, y });
+      if (pinch && pointers.size >= 2) {
+        // Keep the time under the fingers' midpoint under the midpoint.
+        const { cx, dist } = twoPointers();
+        const span = (pinch.span * pinch.dist) / dist;
+        const t0 = pinch.t - ((cx - a.x) / a.w) * span;
+        state.setView(t0, t0 + span);
+        return;
+      }
       state.setHover(x >= a.x && x <= a.x + a.w ? plot.timeAt(x) : null);
       canvas.style.cursor = inBrackets(y) && plot.bracketAt(x, y) >= 0 ? "pointer" : drag?.moved ? "grabbing" : "crosshair";
       if (!drag) return;
@@ -189,18 +220,30 @@ function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void 
     },
     opts,
   );
+  const release = (e: PointerEvent) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    const wasGesture = pinched || drag?.moved;
+    drag = null;
+    if (pointers.size === 0) pinched = false;
+    return !wasGesture;
+  };
   canvas.addEventListener(
     "pointerup",
     (e) => {
-      const wasDrag = drag?.moved;
-      drag = null;
-      if (wasDrag) return;
+      if (!release(e)) return;
+      // A tap: focus the bracket under it; on touch, a double tap resets the view.
       const { x, y } = pos(e);
       const loop = inBrackets(y) ? plot.bracketAt(x, y) : -1;
       state.setFocus(loop === state.focused ? -1 : loop);
+      if (e.pointerType === "touch") {
+        if (e.timeStamp - lastTap < 300) state.resetView();
+        lastTap = e.timeStamp;
+      }
     },
     opts,
   );
+  canvas.addEventListener("pointercancel", (e) => void release(e), opts);
   canvas.addEventListener("pointerleave", () => state.setHover(null), opts);
   canvas.addEventListener("dblclick", () => state.resetView(), opts);
 
@@ -222,6 +265,18 @@ function attachInteraction(plot: Plot, state: State, signal: AbortSignal): void 
     opts,
   );
 }
+
+// Remembered per browser; storage may be unavailable (private mode).
+try {
+  const saved = localStorage.getItem("collapseDelays");
+  if (saved !== null) collapseInput.checked = saved === "1";
+} catch {}
+collapseInput.addEventListener("change", () => {
+  try {
+    localStorage.setItem("collapseDelays", collapseInput.checked ? "1" : "0");
+  } catch {}
+  current?.state.setCollapseDelays(collapseInput.checked);
+});
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];

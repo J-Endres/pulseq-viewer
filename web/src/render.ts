@@ -3,13 +3,16 @@ import type { State } from "./state.ts";
 /** Channel rows, in the order `Viewer.waveforms` returns them. */
 const ROWS = [
   { label: "RF", unit: "Hz", color: "--ch-rf", weight: 1, symmetric: false },
-  { label: "RF phase", unit: "rad", color: "--ch-phase", weight: 0.7, symmetric: true },
+  { label: "Phase", unit: "rad", color: "--ch-phase", weight: 0.7, symmetric: true },
   { label: "Gx", unit: "kHz/m", color: "--ch-gx", weight: 1, symmetric: true },
   { label: "Gy", unit: "kHz/m", color: "--ch-gy", weight: 1, symmetric: true },
   { label: "Gz", unit: "kHz/m", color: "--ch-gz", weight: 1, symmetric: true },
   { label: "ADC", unit: "", color: "--ch-adc", weight: 0.35, symmetric: false },
 ] as const;
+const PHASE_ROW = 1;
 const ADC_ROW = 5;
+/** Extra channel after the rows: receiver phase, drawn in the phase row. */
+const ADC_PHASE = 6;
 
 /** Layout in CSS pixels. */
 const GUTTER = 104;
@@ -149,6 +152,7 @@ export class Plot {
     }
     ctx.restore();
 
+    this.drawCollapsed(color);
     this.drawBrackets(color);
 
     // Waveforms
@@ -164,6 +168,10 @@ export class Plot {
       ctx.clip();
       if (ch === ADC_ROW) this.drawAdc(slice, columns, rect, color(row.color));
       else this.drawEnvelope(slice, columns, rect, this.yScale(ch, rect), color(row.color));
+      if (ch === PHASE_ROW) {
+        const adcPhase = data.subarray(ADC_PHASE * columns * 2, (ADC_PHASE + 1) * columns * 2);
+        this.drawEnvelope(adcPhase, columns, rect, this.yScale(ch, rect), color("--ch-adc"));
+      }
       ctx.restore();
     });
 
@@ -183,6 +191,43 @@ export class Plot {
         ctx.setLineDash([]);
       }
     }
+  }
+
+  /** Collapsed delay blocks: a tinted band with dashed edges and the real duration. */
+  private drawCollapsed(color: (n: string) => string): void {
+    const { ctx, state } = this;
+    const a = this.area;
+    const d = state.viewer.collapsed(state.iters, state.t0, state.t1, 5000);
+    if (d.length === 0) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(a.x, a.y, a.w, a.h);
+    ctx.clip();
+    ctx.font = `11px ${getComputedStyle(this.canvas).fontFamily}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.setLineDash([2, 3]);
+    ctx.lineWidth = 1;
+    for (let i = 0; i < d.length; i += 3) {
+      const x0 = this.xAt(d[i]!);
+      const x1 = this.xAt(d[i + 1]!);
+      ctx.fillStyle = color("--collapsed");
+      ctx.fillRect(x0, a.y, x1 - x0, a.h);
+      if (x1 - x0 < 4) continue;
+      ctx.strokeStyle = color("--bracket");
+      ctx.beginPath();
+      for (const x of [x0, x1]) {
+        ctx.moveTo(Math.round(x) + 0.5, a.y);
+        ctx.lineTo(Math.round(x) + 0.5, a.y + a.h);
+      }
+      ctx.stroke();
+      const label = formatSeconds(d[i + 2]!);
+      if (ctx.measureText(label).width + 6 <= x1 - x0) {
+        ctx.fillStyle = color("--text-muted");
+        ctx.fillText(label, (x0 + x1) / 2, a.y + a.h - 2);
+      }
+    }
+    ctx.restore();
   }
 
   /** Value → CSS y within a row. */
@@ -205,6 +250,20 @@ export class Plot {
     if (row.unit) {
       ctx.fillStyle = color("--text-muted");
       ctx.fillText(row.unit, 8, rect.y + Math.min(24, rect.h / 2 + 12));
+    }
+    if (ch === PHASE_ROW && rect.h >= 56) {
+      // Legend: colour swatch next to text in text colour
+      [["RF", "--ch-phase"], ["ADC", "--ch-adc"]].forEach(([name, swatch], i) => {
+        const y = rect.y + 38 + i * 13;
+        ctx.strokeStyle = color(swatch!);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(8, y);
+        ctx.lineTo(18, y);
+        ctx.stroke();
+        ctx.fillStyle = color("--text-muted");
+        ctx.fillText(name!, 22, y);
+      });
     }
     if (ch === ADC_ROW) return;
 
@@ -362,6 +421,12 @@ export class Plot {
     ctx.fillText("ms", GUTTER - 6, y);
     ctx.textBaseline = "middle";
   }
+}
+
+function formatSeconds(s: number): string {
+  if (s >= 1) return `${s.toPrecision(3)} s`;
+  if (s >= 1e-3) return `${(s * 1e3).toPrecision(3)} ms`;
+  return `${(s * 1e6).toPrecision(3)} µs`;
 }
 
 function niceStep(raw: number): number {

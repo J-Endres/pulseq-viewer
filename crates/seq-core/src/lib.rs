@@ -95,6 +95,22 @@ impl Viewer {
         self.a.adc_samples(iters, t0, t1, max as usize)
     }
 
+    /// Draw delay blocks (no events) at most as wide as the median block
+    /// with events. Changes the display layout (`loops`, `display_duration`).
+    pub fn set_collapse_delays(&mut self, collapse: bool) {
+        self.a.set_collapse_delays(collapse);
+    }
+
+    /// Collapsed delay blocks in `[t0, t1]`, 3 values each: display start,
+    /// display end `[s]`, real duration `[s]`; at most `max` of them.
+    pub fn collapsed(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64> {
+        self.a
+            .collapsed(iters, t0, t1, max as usize)
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
     /// `[block index, real time [s], block display start [s]]` under display
     /// time `t`, or empty outside the timeline.
     pub fn hover(&self, iters: &[u32], t: f64) -> Vec<f64> {

@@ -176,6 +176,22 @@ over the pre-ordered list; a leaf's block is `start(parent) + offset`. Real
 time at a display time is the real start of the resolved block plus the offset
 into it.
 
+### Collapsed delays
+
+A *delay block* is a block without RF, gradient or ADC events. With
+**Collapse delays** on (a header toggle, on by default and remembered per
+browser), each delay block is laid out with a display duration of at most the
+median duration of the blocks that have events; shorter delays keep their
+real duration. Loop detection is unaffected (signatures still use the real
+duration), and since all iterations of a loop share their signatures, a
+collapsed delay inside a loop has the same width in every iteration.
+Toggling re-runs the layout in wasm and keeps the current iterations.
+
+Inside a collapsed block, display time maps linearly onto the block's real
+duration, so the hover readout still shows real time. The renderer shades
+collapsed blocks across all rows, marks their edges with dashed lines and
+labels them with their real duration when it fits.
+
 ## Stack mode
 
 Stack mode shows exactly one iteration of every loop at a time.
@@ -202,8 +218,8 @@ Stack mode shows exactly one iteration of every loop at a time.
 ## Rendering
 
 - **One `<canvas>`** filling the plot area, sized with `devicePixelRatio` for
-  sharp lines. Rows from top to bottom: RF magnitude, RF phase, Gx, Gy, Gz,
-  ADC. All rows share the display-time x-axis; each row has its label, unit,
+  sharp lines. Rows from top to bottom: RF magnitude, phase (RF and ADC),
+  Gx, Gy, Gz, ADC. All rows share the display-time x-axis; each row has its label, unit,
   zero line and min/max labels on the left.
 - **Units**: RF magnitude in Hz, RF phase in rad, gradients in kHz/m, time in
   ms.
@@ -220,6 +236,11 @@ Stack mode shows exactly one iteration of every loop at a time.
     drawn only where the magnitude is nonzero.
   - ADC is drawn as a bar over each acquisition window, with one tick per
     sample once samples are at least 4 px apart.
+  - ADC phase is the event phase plus the per-sample phase shape if there is
+    one, wrapped to (−π, π], over the acquisition window. It is returned as
+    a seventh envelope channel and drawn in the phase row in the ADC colour,
+    so receiver and RF phase share one axis; the row has a small RF/ADC
+    legend in its label area.
   - Blocks narrower than two columns contribute a per-block, per-channel
     (min, max) summary computed at load time instead of their samples.
     Summaries use per-shape statistics cached by shape, since pulseq-rs shares
@@ -227,12 +248,15 @@ Stack mode shows exactly one iteration of every loop at a time.
 - The renderer draws each column as a vertical line from min to max,
   connected to the neighbouring columns, which shows a smooth curve when
   zoomed in and the filled extent of dense waveforms when zoomed out.
-- **Colours**: one fixed hue per channel (RF blue, phase violet, Gx orange,
-  Gy aqua, Gz magenta, ADC green), with separate light and dark values chosen
+- **Colours**: one fixed hue per channel (RF blue, RF phase violet, Gx
+  orange, Gy aqua, Gz magenta, ADC and ADC phase green), with separate light and dark values chosen
   by `prefers-color-scheme`. Loop extents get a light background tint in all
   rows.
 - **Navigation**: wheel zooms around the cursor, horizontal wheel and drag
-  pan, double-click resets to the full timeline. The footer shows the block
+  pan, double-click resets to the full timeline. On touch screens a
+  two-finger pinch zooms around the fingers' midpoint (keeping the time under
+  it fixed, so moving both fingers also pans), one finger pans, a tap focuses
+  a bracket and a double tap resets. The footer shows the block
   number and real time under the pointer, and the sequence name, block count,
   real duration, loop count and interpreter warnings.
 - Redraws are scheduled with `requestAnimationFrame` and coalesced.
@@ -268,6 +292,13 @@ impl Viewer {
 
     /// Display times of ADC samples in the window; empty if more than `max`.
     pub fn adc_samples(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64>;
+
+    /// Collapse delay blocks (re-runs the layout).
+    pub fn set_collapse_delays(&mut self, collapse: bool);
+
+    /// Collapsed delays in the window, 3 values each: display start,
+    /// display end, real duration.
+    pub fn collapsed(&self, iters: &[u32], t0: f64, t1: f64, max: u32) -> Vec<f64>;
 
     /// [block index, real time, block display start] under display time t.
     pub fn hover(&self, iters: &[u32], t: f64) -> Vec<f64>;
