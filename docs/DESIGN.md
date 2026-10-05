@@ -117,11 +117,19 @@ of a body of length `p`. For every period `p` from 1 to `P_max`:
 
 ### Choosing where an iteration starts
 
-A run with period `p` can be read with its body starting at any of `p`
-offsets. The body is rotated so it starts at the first block in the run that
-contains an RF event; the blocks before that offset stay outside the loop.
-If the run has no RF block, or the rotation would leave fewer than two
-copies, the run starts where the scan found it.
+A repeat spanning `m = L + p` blocks can be read with its body starting at
+any of `p` offsets. Offsets `0 ..= m mod p` keep all `⌊m / p⌋` copies; the
+others lose one. Of the offsets that keep all copies, the one closest before
+an RF block is used: an RF block itself if there is one, otherwise the offset
+with the fewest blocks before the body's first RF block (e.g. a slice-select
+ramp-up block). The blocks before that offset stay outside the loop. If the
+body has no RF block, the run starts where the scan found it.
+
+Never giving up a copy matters when the block before the first iteration
+happens to equal the last block of every iteration (e.g. a dummy shot ending
+with the same rewinder as the imaging shots): the run is then found one
+block early, and rotating it onto the RF block would cut off the last
+iteration.
 
 ### Collapsing and nesting
 

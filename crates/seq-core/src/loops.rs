@@ -122,8 +122,9 @@ impl Candidate {
     }
 }
 
-/// All maximal runs of `k ≥ 2` copies for every period up to `P_MAX`, with
-/// the body rotated to start at an RF block where possible.
+/// All maximal runs of `k ≥ 2` copies for every period up to `P_MAX`. Of the
+/// body rotations that keep the most copies, the one starting closest before
+/// an RF block (or on it) is used.
 fn candidates(s: &[u32], rf_first: &[bool]) -> Vec<Candidate> {
     let n = s.len();
     let mut out = Vec::new();
@@ -143,20 +144,18 @@ fn candidates(s: &[u32], rf_first: &[bool]) -> Vec<Candidate> {
             if run < 2 * p {
                 continue;
             }
-            let rotation = (0..p).find(|&r| rf_first[s[a + r] as usize]);
-            let c = match rotation {
-                Some(r) if (run - r) / p >= 2 => Candidate {
-                    start: a + r,
-                    period: p,
-                    count: (run - r) / p,
-                },
-                _ => Candidate {
-                    start: a,
-                    period: p,
-                    count: run / p,
-                },
-            };
-            out.push(c);
+            // Offsets 0..=run % p keep all `run / p` copies; of those, take
+            // the one closest before an RF block (or on it).
+            let rf_at = |r: usize| rf_first[s[a + r % p] as usize];
+            let to_rf = |r: usize| (0..p).find(|&d| rf_at(r + d));
+            let r = (0..=run % p)
+                .min_by_key(|&r| to_rf(r).unwrap_or(0))
+                .unwrap();
+            out.push(Candidate {
+                start: a + r,
+                period: p,
+                count: (run - r) / p,
+            });
         }
     }
     out
@@ -237,6 +236,20 @@ mod tests {
         // The run is found starting at `c` (equal to the trailing block), but
         // the body is rotated to start at the RF block `A`.
         assert_eq!(roll(&format!("c{}", "Abc".repeat(4))), "c(Abc)4");
+    }
+
+    #[test]
+    fn rotation_keeps_copies() {
+        // Rotating to `A` would leave three copies; the body starts at the
+        // block before it instead.
+        assert_eq!(roll(&"pAbc".repeat(4)), "(pAbc)4");
+    }
+
+    #[test]
+    fn rotation_closest_before_rf() {
+        // The run is found starting at `c`, one block early; the body starts
+        // at `p`, right before the RF block.
+        assert_eq!(roll(&format!("c{}", "pAbc".repeat(3))), "c(pAbc)3");
     }
 
     #[test]

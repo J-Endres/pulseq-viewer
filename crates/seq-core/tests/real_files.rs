@@ -223,3 +223,18 @@ fn time_segments_follow_real_time() {
     let first = (l.first_block + 5 * l.blocks_per_iter) as usize;
     assert!((piece.2 - a.block_start[first]).abs() < 1e-12);
 }
+
+/// Multi-shot TSE: a dummy shot without ADC, then 4 shots of 16 echoes. The
+/// last block of the dummy shot equals the last block of every shot, so the
+/// shot repeat is found one block early and must not lose an iteration.
+#[test]
+fn tse_shots() {
+    let a = load("tse.seq");
+    check_cover(&a);
+    let loops: Vec<_> = a
+        .loops
+        .iter()
+        .map(|l| (l.depth, l.count, l.blocks_per_iter, l.first_block))
+        .collect();
+    assert_eq!(loops, [(0, 16, 4, 3), (0, 4, 70, 70), (1, 16, 4, 73)]);
+}
